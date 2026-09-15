@@ -4,7 +4,7 @@ import random
 import time
 from typing import Union
 
-from llm_capabilities import supports_json_schema
+from llm_capabilities import supports_json_schema, is_json_schema_shared_with_model
 from llm_client import (
     is_retryable_error,
     is_rate_limit_error,
@@ -17,6 +17,7 @@ from llm_client import (
     StructuralRateLimitError,
     ProviderRateLimitedError,
     supports_json_schema_for_calls,
+    get_json_schema_automatically_shared_with_model,
 )
 from rate_limit_hold import (
     MAX_RESET_SECONDS, MIN_HOLD_RESET_SECONDS, is_rate_limit_hold_enabled,
@@ -53,6 +54,20 @@ def schema_format_for(model, name: str, schema: dict,
         return json_schema_format(name, schema, description)
     return {"type": "json_object"}
 
+def should_include_json_schema_in_prompt(model: str, 
+                                         allow_provider_schema: bool = False) -> bool:
+    """True if the schema should be included in the prompt for the model
+    based on its capabilities and provider settings.
+    """
+    return not _is_json_schema_automatically_shared_with_model(model)
+
+def _is_json_schema_automatically_shared_with_model(model: str, 
+                                         allow_provider_schema: bool = False) -> bool:
+    """True if the schema is automatically shared with the model based on its
+    capabilities and provider settings.
+    """
+    return get_json_schema_automatically_shared_with_model(model) or (
+            allow_provider_schema and is_json_schema_shared_with_model(get_effective_provider()))
 
 class EmptyCompletionError(Exception):
     """The provider returned a completion with no content.

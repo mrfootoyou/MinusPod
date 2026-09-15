@@ -7,6 +7,7 @@ Package layout:
   external callers (production and tests) imported from the pre-split module
 """
 import logging
+import json
 import random
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,7 +27,10 @@ from llm_client import (
 from run_context import run_in_worker_thread
 from sponsor_normalize import segment_category_for
 from utils.language import get_pattern_language
-from utils.llm_call import call_llm, call_llm_for_window, schema_format_for
+from utils.llm_call import (
+    call_llm, call_llm_for_window, schema_format_for,
+    should_include_json_schema_in_prompt
+)
 from utils.markers import (
     DAI_CORE_SPANS,
     mark_distinct_merge,
@@ -131,7 +135,7 @@ from .prompts import (
     CATEGORY_REPAIR_SYSTEM_PROMPT,
     CATEGORY_REPAIR_JSON_SCHEMA,
     CATEGORY_REPAIR_MAX_TOKENS,
-    AD_DETECTION_JSON_SCHEMA,
+    SEGMENT_JSON_SCHEMA,
     format_category_repair_prompt,
     log_assembled_system_prompt,
     parse_category_repair_response,
@@ -784,8 +788,9 @@ class AdDetector:
             from utils.constants import DEFAULT_SYSTEM_PROMPT
             prompt = DEFAULT_SYSTEM_PROMPT
         prompt = strip_comments_from_prompt(prompt)
-        return self._apply_pass_override(
-            self._render_with_sponsors(prompt, 'seed_sponsors_detection'), 'system_prompt_override')
+        prompt = self._render_with_sponsors(prompt, 'seed_sponsors_detection')
+        prompt = self._apply_pass_override(prompt, 'system_prompt_override')
+        return prompt.strip()
 
     def get_verification_prompt(self) -> str:
         """Get verification prompt from database or default, with dynamic sponsors substituted."""
@@ -799,8 +804,9 @@ class AdDetector:
             from database import DEFAULT_VERIFICATION_PROMPT
             prompt = DEFAULT_VERIFICATION_PROMPT
         prompt = strip_comments_from_prompt(prompt)
-        return self._apply_pass_override(
-            self._render_with_sponsors(prompt, 'seed_sponsors_verification'), 'verification_prompt_override')
+        prompt = self._render_with_sponsors(prompt, 'seed_sponsors_verification')
+        prompt = self._apply_pass_override(prompt, 'verification_prompt_override')
+        return prompt.strip()
 
     def _get_sponsor_list_safely(self) -> str:
         """Pull the dynamic sponsor list, returning empty string on any error."""
@@ -905,21 +911,38 @@ class AdDetector:
         return [f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}"
                 for seg in window_segments]
 
-    def _build_detection_system_prompt(self, slug: str, addressing_mode: str = 'timestamps') -> str:
+    def _build_detection_system_prompt(self, slug: str, model: str,
+                                       addressing_mode: str = 'timestamps',
+                                       show_segments_enabled: bool = False) -> str:
         """Compose the system prompt for detection window calls.
 
-        Appends SHOW_SEGMENTS_PROMPT_SECTION to get_system_prompt() when the
-        podcast opted in, after override resolution, so a customized
-        system_prompt still gets the show-segments instructions. Appends
-        SEGMENT_ID_SYSTEM_SECTION when ``addressing_mode`` is 'segment_ids'
-        (issue: hushpod adoption), after the show-segments section so both
-        can layer independently.
+        # Appends SHOW_SEGMENTS_PROMPT_SECTION to get_system_prompt() when the
+        # podcast opted in, after override resolution, so a customized
+        # system_prompt still gets the show-segments instructions. Appends
+        # SEGMENT_ID_SYSTEM_SECTION when ``addressing_mode`` is 'segment_ids'
+        # (issue: hushpod adoption), after the show-segments section so both
+        # can layer independently.
         """
         prompt = self.get_system_prompt()
-        if self._podcast_wants_show_segments(slug):
-            prompt = f"{prompt}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
-        if addressing_mode == 'segment_ids':
-            prompt = f"{prompt}{SEGMENT_ID_SYSTEM_SECTION}"
+
+        # if show_segments_enabled:
+        #     prompt += strip_comments_from_prompt(SHOW_SEGMENTS_PROMPT_SECTION)
+        # if addressing_mode == 'segment_ids':
+        #     prompt += strip_comments_from_prompt(SEGMENT_ID_SYSTEM_SECTION)
+
+        if should_include_json_schema_in_prompt(model):
+            # Use compact formatting to minimize token usage.
+            output_schema = (
+                "Follow this schema. Use `null` where applicable; do not invent "
+                "additional properties.\n"
+                "```json\n"
+                f"{json.dumps(SEGMENT_JSON_SCHEMA)}\n"
+                "```"
+            )
+        else:
+            output_schema = "Follow the structured-output schema strictly."
+
+        prompt = prompt.replace("{output_schema}", output_schema)
         return prompt
 
     _HINT_TIER1_CAP = 12
@@ -947,7 +970,7 @@ class AdDetector:
             if is_defined_pattern(p) and len(tier1) < self._HINT_TIER1_CAP:
                 snippet = truncate(p.get('intro_text') or p.get('outro_text') or '', self._HINT_SNIPPET_CHARS)
                 category = sponsor_categories.get(key) or p.get('category') or 'sponsor'
-                line = f"- {sponsor} ({category} read)."
+                line = f"{sponsor} ({category})"
                 if snippet:
                     line += f' Opens like: "{snippet}"'
                 tier1.append(line)
@@ -958,19 +981,17 @@ class AdDetector:
         # A sponsor-level category still reaches the prompt when every pattern
         # naming it is auto-learned, which the tier above leaves nameless.
         categorized = [
-            f"- {name} ({sponsor_categories[key]} read)."
+            f"{name} ({sponsor_categories[key]})"
             for key, name in sorted(names.items())
             if key in sponsor_categories and key not in tier1_keys
         ]
         leftovers = sorted(name for key, name in names.items() if key not in sponsor_categories)
-        parts = []
+        parts = ""
         if tier1 or categorized:
-            parts.append("Known recurring ads on this feed:\n" + "\n".join(tier1 + categorized))
+            parts += f"Known recurring ads on this feed:\n- {'\n- '.join(tier1 + categorized)}\n"
         if leftovers:
-            parts.append(f"Previously detected sponsors for this podcast: {', '.join(leftovers)}")
-        parts.append("Reads for the sponsors above are ads on this feed; "
-                     "report them with the stated category.")
-        return "\n".join(parts) + "\n"
+            parts += f"Previously detected sponsors for this podcast: {', '.join(leftovers)}\n"
+        return parts + "\n"
 
     def _apply_sponsor_segment_categories(self, ads, slug, episode_id):
         """Stamp the operator's per-sponsor segment category onto ads naming that sponsor."""
@@ -1023,8 +1044,7 @@ class AdDetector:
             window_label=window_label,
             pass_name=pass_name,
             response_format=schema_format_for(
-                model, 'ad_detection', AD_DETECTION_JSON_SCHEMA,
-                'Ad segments detected in this window.'),
+                model, 'transcript_segments', SEGMENT_JSON_SCHEMA),
         )
 
     def _process_single_window(self, *, window_idx, window, total_windows,
@@ -1592,9 +1612,11 @@ class AdDetector:
                        f"({win_size/60:.0f}min size, {win_overlap/60:.0f}min overlap) "
                        f"for {total_duration/60:.1f}min episode")
 
+            show_segments_enabled = self._podcast_wants_show_segments(slug)
+
             # Get prompts and model
-            system_prompt = self._build_detection_system_prompt(slug, addressing_mode)
             model = self.get_model()
+            system_prompt = self._build_detection_system_prompt(slug, model, addressing_mode, show_segments_enabled)
 
             logger.info(f"[{slug}:{episode_id}] Using model: {model}")
             log_assembled_system_prompt(slug, episode_id, system_prompt)
@@ -1608,7 +1630,7 @@ class AdDetector:
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
+                description_section += f"Episode Description:\n{episode_description}\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed episode description ({len(episode_description)} chars)")
 
             # Add podcast-specific known-pattern hint from ad_patterns
@@ -1631,9 +1653,6 @@ class AdDetector:
 
             # Gates the category repair pass and the category-miss warning on
             # whether per-category actions are configured for this feed.
-            # Checks system_prompt for SHOW_SEGMENTS_PROMPT_SECTION instead of
-            # a second DB call: _build_detection_system_prompt already made it.
-            show_segments_enabled = SHOW_SEGMENTS_PROMPT_SECTION in system_prompt
             segment_categories_configured = show_segments_enabled or (
                 action_map is not None
                 and any(action != DEFAULT_SEGMENT_ACTION
@@ -3018,8 +3037,8 @@ class AdDetector:
             system_prompt = self.get_verification_prompt()
             log_assembled_system_prompt(slug, episode_id, system_prompt,
                                         label="Verification system")
-            if addressing_mode == 'segment_ids':
-                system_prompt = f"{system_prompt}{SEGMENT_ID_SYSTEM_SECTION}"
+            # if addressing_mode == 'segment_ids':
+            #     system_prompt += SEGMENT_ID_SYSTEM_SECTION
             model = self.get_verification_model()
 
             logger.info(f"[{slug}:{episode_id}] Verification using model: {model}")
@@ -3032,10 +3051,7 @@ class AdDetector:
             
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += (
-                    f"Episode Description (this describes the actual content topics discussed; "
-                    f"it may also list episode sponsors):\n{episode_description}\n"
-                )
+                description_section += f"Episode Description:\n{episode_description}\n\n"
 
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:

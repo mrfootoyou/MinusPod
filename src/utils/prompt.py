@@ -62,11 +62,12 @@ def apply_override(prompt: str, override: str) -> str:
     control its placement and the wording around it. Otherwise the override is
     appended under a precedence header.
     """
-    if not override or not override.strip():
-        return prompt.replace('{override}', '') if '{override}' in prompt else prompt
+    override = override.strip() if override else ""
     if '{override}' in prompt:
         return prompt.replace('{override}', override)
-    return prompt + OVERRIDE_HEADER + override
+    if override:
+        return prompt + OVERRIDE_HEADER + override
+    return prompt
 
 def strip_html(text: str|None) -> str|None:
     """Convert simple HTML to plain text for show-note timestamp parsing.

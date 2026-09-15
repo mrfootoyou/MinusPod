@@ -81,6 +81,49 @@ def _segment_entries_to_ads(entries):
         ads.append(s)
     return ads
 
+_ADDITIONAL_AD_ARRAY_KEYS = ['segments', 'ads', 'ad', 'ads_detected',
+                             'advertisement_segments', 'ads_and_sponsorships']
+
+def _search_ads_in_obj(obj) -> tuple[list, str] | None:
+    """Searches for ad array in the given object.
+
+    Returns a tuple of (ads_list, key_name) if an ad array is found,
+    or None otherwise.
+    """
+    if isinstance(obj, list):
+        return obj, "json_array_direct"
+
+    if isinstance(obj, dict):
+        # Look for common keys that might contain ad arrays.
+        # Include singular "ad": local models (e.g. qwen2.5 via Ollama)
+        # often return {"ad": [...]} instead of {"ads": [...]}.
+        for key in _ADDITIONAL_AD_ARRAY_KEYS:
+            if key in obj and isinstance(obj[key], list):
+                ads = obj[key]
+                # if key == 'segments':
+                #     ads = _segment_entries_to_ads(ads)
+                return ads, f"json_object_{key}_key"
+
+        if 'window' in obj and isinstance(obj['window'], dict):
+            result = _search_ads_in_obj(obj['window'])
+            if result is not None:
+                ads, key = result
+                return ads, f"json_object_window_{key}"
+
+    return None
+
+def _try_extract_parsed_ads(json: str) -> tuple[list, str] | None:
+    """Tries to get the parsed ads arrays from the given JSON string.
+
+    Returns a tuple of (ads_list, extraction_method) if an ad array is found,
+    or None otherwise.
+    """
+    try:
+        obj = json.loads(json)
+        return _search_ads_in_obj(obj)
+    except json.JSONDecodeError:
+        pass
+    return None
 
 def extract_json_ads_array(
     response_text: str,
@@ -98,80 +141,44 @@ def extract_json_ads_array(
     Returns (ads_list, extraction_method) or (None, None) if no valid JSON found.
     """
     cleaned_text = _strip_preamble(response_text, slug, episode_id)
-
-    try:
-        parsed = json.loads(cleaned_text)
-        if isinstance(parsed, list):
-            return parsed, "json_array_direct"
-        if isinstance(parsed, dict):
-            if 'window' in parsed and isinstance(parsed['window'], dict):
-                window = parsed['window']
-                # Include singular "ad": local models (e.g. qwen2.5 via Ollama)
-                # often return {"ad": [...]} instead of {"ads": [...]}.
-                for key in ['ads_detected', 'ads', 'ad', 'advertisement_segments',
-                            'ads_and_sponsorships', 'segments']:
-                    if key in window and isinstance(window[key], list):
-                        ads = window[key]
-                        if key == 'segments':
-                            ads = _segment_entries_to_ads(ads)
-                        return ads, f"json_object_window_{key}"
-            ad_keys = ['ads', 'ad', 'ads_detected', 'advertisement_segments', 'ads_and_sponsorships']
-            for key in ad_keys:
-                if key in parsed and isinstance(parsed[key], list):
-                    return parsed[key], f"json_object_{key}_key"
-            if 'segments' in parsed and isinstance(parsed['segments'], list):
-                ads = _segment_entries_to_ads(parsed['segments'])
-                return ads, "json_object_segments_key"
-            _has_start = any('start' in k.lower() for k in parsed)
-            _has_end = any('end' in k.lower() and k.lower() != 'endorser' for k in parsed)
-            if _has_start and _has_end:
-                logger.info(f"[{slug}:{episode_id}] Single ad object detected, wrapping in array")
-                return [parsed], "json_object_single_ad"
-            return [], "json_object_no_ads"
-    except json.JSONDecodeError:
-        pass
+    result = _try_extract_parsed_ads(cleaned_text)
+    if result is not None:
+        return result
 
     code_block_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', response_text)
     if code_block_match:
-        try:
-            return json.loads(code_block_match.group(1)), "markdown_code_block"
-        except json.JSONDecodeError:
-            pass
+        result = _try_extract_parsed_ads(code_block_match.group(1))
+        if result is not None:
+            ads, _ = result
+            return ads, "markdown_code_block"
 
     scan_text = response_text[:200_000]
-    last_valid_ads = None
+    last_valid_result = None
     for candidate in find_json_array_candidates(scan_text):
-        try:
-            potential_ads = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(potential_ads, list):
-            if not potential_ads or (isinstance(potential_ads[0], dict)
-                                     and 'start' in potential_ads[0]):
-                last_valid_ads = potential_ads
-    if last_valid_ads is not None:
-        return last_valid_ads, "regex_json_array"
+        result = _try_extract_parsed_ads(candidate)
+        if result is not None:
+            potential_ads, key = result
+            if isinstance(potential_ads, list):
+                if not potential_ads or (
+                    isinstance(potential_ads[0], dict) and (
+                        'start' in potential_ads[0] or 'start_id' in potential_ads[0])):
+                    last_valid_result = result
+    if last_valid_result is not None:
+        ads, _ = last_valid_result
+        return ads, "regex_json_array"
 
     clean_response = re.sub(r'```json\s*', '', response_text)
     clean_response = re.sub(r'```\s*', '', clean_response)
     start_idx = clean_response.find('[')
     end_idx = clean_response.rfind(']') + 1
     if start_idx >= 0 and end_idx > start_idx:
-        json_str = clean_response[start_idx:end_idx]
-        try:
-            return json.loads(json_str), "bracket_fallback"
-        except json.JSONDecodeError as e:
-            logger.warning(
-                f"[{slug}:{episode_id}] Strategy 3 JSON parse failed: {e} "
-                f"(length={len(json_str)}, start={json_str[:50]!r}, end={json_str[-50:]!r})"
-            )
+        result = _try_extract_parsed_ads(clean_response[start_idx:end_idx])
+        if result is not None:
+            ads, _ = result
+            return ads, "bracket_fallback"
 
     salvaged = _salvage_truncated_single_ad(response_text)
     if salvaged is not None:
-        logger.info(
-            f"[{slug}:{episode_id}] Salvaged truncated single-ad JSON "
-            f"(model hit max_tokens mid-response)"
-        )
         return [salvaged], "json_object_single_ad_truncated"
 
     return None, None

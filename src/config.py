@@ -87,6 +87,8 @@ SEGMENT_CATEGORY_ALIASES = {
     'cross_promotion': 'cross_promo',
     'crosspromo': 'cross_promo',
     'sponsorship': 'sponsor',
+    'teaser': 'intro',
+    'transition': 'intro', # depends on context, but assume intro
 }
 
 

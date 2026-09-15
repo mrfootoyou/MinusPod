@@ -50,11 +50,18 @@ _SPONSOR_FIELD_STEMS = frozenset(_singular(f) for f in SPONSOR_PRIORITY_FIELDS)
 
 # User prompt template (not configurable via UI - just formats the transcript)
 # Description is optional - may contain sponsor lists, chapter markers, or content context
-USER_PROMPT_TEMPLATE = """Podcast: {podcast_name}
+USER_PROMPT_TEMPLATE = """
+**Metadata**
+Podcast: {podcast_name}
 Episode: {episode_title}
 {description_section}
-Transcript:
-{transcript}"""
+
+{transcript_header}
+
+{transcript}
+
+{audio_context}
+"""
 
 def create_windows(segments: list[dict], window_size: float = None,
                    overlap: float = None) -> list[dict]:
@@ -141,63 +148,43 @@ def format_window_prompt(
     `description_section` and `audio_context` are pre-built strings so the
     benchmark can call this without DB or audio-analysis state. Production
     callers assemble both then pass them in.
-
-    `addressing_mode` selects the window-context rules appended after the
-    header: 'timestamps' (default) emits the original three bullets telling
-    the model to use absolute timestamps, byte-identical to before this
-    parameter existed; 'segment_ids' (issue: hushpod adoption) emits
-    SEGMENT_ID_WINDOW_RULES instead of those bullets -- never both, so the
-    prompt never tells the model to use and never use timestamps in the same
-    message. Callers that never pass it (benchmark, keep-content windows)
-    get 'timestamps' behavior unchanged.
     """
     transcript = "\n".join(transcript_lines)
-    header = (
-        f"\n\n=== WINDOW {window_index + 1}/{total_windows}: "
-        f"{window_start/60:.1f}-{window_end/60:.1f} minutes ==="
-    )
-    if addressing_mode == "segment_ids":
-        rules = SEGMENT_ID_WINDOW_RULES
-    else:
-        rules = (
-            "\n- Use absolute timestamps from transcript (as shown in brackets)"
-            "\n- If an ad starts before this window, use the first timestamp with note \"continues from previous\""
-            f"\n- If an ad extends past this window, use {window_end:.1f} with note \"continues in next\"\n"
+
+    if total_windows <= 1:
+        transcript_header = (
+            '**Transcript** '
+            f'({(window_end - window_start)/60:.1f} minutes)'
         )
-    window_context = header + rules
-    return strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
-        podcast_name=podcast_name,
-        episode_title=episode_title,
-        description_section=description_section,
-        transcript=transcript,
-    ) + audio_context + window_context
+    else:
+        transcript_header = (
+            '**Transcript Excerpt** '
+            f'(minutes {window_start/60:.1f} thru {window_end/60:.1f})'
+            '\n'
+            '\n> Note: This is an EXCERPT so the first and last segments '
+            'may be incomplete. If true, include "continues from previous" '
+            'or "continues in next" in the `reason` field and adjust '
+            '`confidence` accordingly.'
+        )
+
+    prompt = strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
+        podcast_name=podcast_name.strip(),
+        episode_title=episode_title.strip(),
+        description_section=description_section.strip(),
+        transcript_header=transcript_header,
+        transcript=transcript.strip(),
+        audio_context=audio_context.strip(),
+    )
+    return prompt.strip()
 
 
 SEGMENT_ID_SYSTEM_SECTION = """
 
-ADDRESSING MODE: SEGMENT IDS
-The transcript is a numbered list; each line starts with its [id]. For every
-detection you report, replace the "start" and "end" timestamp fields with
-integer "start_id" and "end_id" fields: the ids of the FIRST and LAST
-transcript lines of the ad, inclusive. Refer to lines ONLY by the ids shown.
-Never output timestamps and never invent ids that do not appear in the
-transcript. All other rules (categories, confidence, reason) are unchanged.
-
-Ignore any earlier instruction to read [Xs] timestamp markers or to output
-numeric "start"/"end" seconds: in this mode the transcript lines carry [id]
-numbers only, and the JSON fields "start"/"end" are replaced by integer
-"start_id"/"end_id". All other rules (categories, confidence, reason) still
-apply."""
-
-
-SEGMENT_ID_WINDOW_RULES = (
-    "\n- Report start_id/end_id integers from the [id] brackets, "
-    "never timestamps"
-    "\n- If an ad starts before this window, use this window's first id "
-    "with note \"continues from previous\""
-    "\n- If an ad extends past this window, use this window's last id "
-    "with note \"continues in next\"\n"
-)
+**Segment IDs**
+Ignore earlier mentions of timestamp markers. The transcript is actually a
+list of cues formatted as `[id] text`. Use the cue id to identify
+the start and end of segments (via the `start_id` and `end_id` fields).
+"""
 
 
 def get_static_system_prompt() -> str:
@@ -210,10 +197,12 @@ def get_static_system_prompt() -> str:
     from utils.constants import DEFAULT_SYSTEM_PROMPT
     from utils.constants import SEED_SPONSORS
     sponsor_list = ', '.join(s['name'] for s in SEED_SPONSORS)
-    return render_prompt(
-        strip_comments_from_prompt(DEFAULT_SYSTEM_PROMPT),
+    prompt = strip_comments_from_prompt(DEFAULT_SYSTEM_PROMPT)
+    prompt = render_prompt(
+        prompt,
         sponsor_database=format_sponsor_block(sponsor_list),
     )
+    return prompt.strip()
 
 
 def _flatten_ad_envelopes(ads: list) -> list:
@@ -379,8 +368,8 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
                         f"{start:.1f}s-{end:.1f}s (is_ad={is_ad_val})")
             return None
 
-    # Filter by classification/type field
-    classification = str(ad.get('classification') or ad.get('type') or '').lower()
+    # Filter out segments explicitly classified as non-ads
+    classification = str(ad.get('category') or ad.get('classification') or ad.get('type') or '').lower()
     if classification in NOT_AD_CLASSIFICATIONS:
         logger.info(f"[{slug}:{episode_id}] Skipping non-ad: "
                     f"{start:.1f}s-{end:.1f}s (classification={classification})")
@@ -522,6 +511,7 @@ def parse_ads_from_response(response_text: str, slug: str = None,
     """
     try:
         ads, extraction_method = extract_json_ads_array(response_text, slug, episode_id)
+        logger.info(f"[{slug}:{episode_id}] Found ads in response using method: {extraction_method}")
 
         if ads is None or not isinstance(ads, list):
             logger.warning(f"[{slug}:{episode_id}] No valid JSON array found in response")
@@ -618,12 +608,17 @@ def parse_id_ads_from_response(response_text: str, slug: str = None,
     approximate timestamps for that window.
     """
     try:
-        raw, _extraction_method = extract_json_ads_array(response_text, slug, episode_id)
+        raw, extraction_method = extract_json_ads_array(response_text, slug, episode_id)
+        assert raw is None or isinstance(raw, list), "Contract mismatch"
     except Exception as e:
         logger.warning(f"[{slug}:{episode_id}] Failed to extract ID-mode ads: {e}")
         return [], False
-    if raw is None or not isinstance(raw, list):
+
+    if raw is None:
+        logger.info(f"[{slug}:{episode_id}] Failed to find ads in response")
         return [], False
+
+    logger.info(f"[{slug}:{episode_id}] Found ads in response using method: {extraction_method}")
     raw = _flatten_ad_envelopes(raw)
     if not raw:
         return [], True  # explicit empty "no ads" answer is a valid ID answer
@@ -634,8 +629,8 @@ def parse_id_ads_from_response(response_text: str, slug: str = None,
     for obj in raw:
         if not isinstance(obj, dict):
             continue
-        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id'))
-        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id'))
+        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id', 'start'))
+        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id', 'end'))
         if sid_lo is None or sid_hi is None:
             skipped_no_id += 1
             continue
@@ -754,48 +749,77 @@ def log_assembled_system_prompt(slug, episode_id, system_prompt, label="System")
     )
 
 
-# Shared by every sponsor alias in the detection schema. The aliases exist so
-# a key-stripping backend cannot discard whichever one a model volunteers.
-SPONSOR_ALIAS_FIELD_DESCRIPTION = (
-    "The advertiser being promoted, when the segment names one. "
-    "Fill at most one of the sponsor fields; omit them all otherwise."
-)
-
-AD_DETECTION_JSON_SCHEMA = {
+# This schema is for identifying ALL segments within a transcript, not just
+# sponsor segments.
+# LLMs do a better job at classifying and identifying sponsor segments when
+# tasked with identifying *all* from start to finish. We will ignore segments
+# we're not interested in.
+SEGMENT_JSON_SCHEMA = {
     "type": "object",
     "properties": {
-        "ads": {
+        "segments": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "start": {"type": "number"},
-                    "end": {"type": "number"},
-                    "start_id": {"type": "integer"},
-                    "end_id": {"type": "integer"},
-                    # The prompt requires end_text on every segment and the
-                    # sponsor extractors read these names; a schema-enforcing
-                    # decoder would silently strip anything absent here.
-                    "end_text": {"type": "string"},
-                    # Same enum as the repair schema above: an enforcing
-                    # decoder cannot emit a synonym the repair map translates.
-                    "category": {"type": "string", "enum": list(SEGMENT_CATEGORIES)},
-                    "confidence": {"type": "number"},
-                    "reason": {"type": "string"},
-                    "note": {"type": "string"},
-                    # Described on the extractor's first-choice field only:
-                    # the model follows the schema here, so repeating it on all
-                    # seven adds tokens and invites the multi-fill it warns off.
-                    **{name: ({"type": "string",
-                               "description": SPONSOR_ALIAS_FIELD_DESCRIPTION}
-                              if name == SPONSOR_PRIORITY_FIELDS[0]
-                              else {"type": "string"})
-                       for name in SPONSOR_PRIORITY_FIELDS},
+                    "start_id": {
+                        "type": "integer",
+                        "description": "ID of the first cue in the segment.",
+                    },
+                    "end_id": {
+                        "type": "integer",
+                        "description": "ID of the last cue in the segment.",
+                    },
+                    "category": {
+                        "type": "string",
+                        # these are defined in the system prompt
+                        "enum": [
+                            "intro",
+                            "teaser",
+                            "recap",
+                            "sponsor",
+                            "cross_promo",
+                            "self_promo",
+                            "interaction",
+                            "transition",
+                            "main_content",
+                            "outro",
+                        ],
+                    },
+                    "confidence": {
+                        "type": "string",
+                        # these are defined in the system prompt
+                        "enum": ["low", "medium", "high"],
+                        "description": "Confidence in the assigned category.",
+                    },
+                    "reason": {
+                        "type": ["null", "string"],
+                        "description": "Short sentence describing the category rationale. Use `null` for main_content and transition segments.",
+                    },
+                    "advertiser": {
+                        "type": ["null", "string"],
+                        "description": "The advertiser, sponsor, or brand of a 'sponsor' segment, `null` otherwise.",
+                    },
+                    "end_text": {
+                        "type": ["null", "string"],
+                        "description": "Final exact five (5) words in a 'sponsor' segment, `null` otherwise.",
+                    },
                 },
+                "required": [
+                    "start_id",
+                    "end_id",
+                    "category",
+                    "confidence",
+                    "advertiser",
+                    "reason",
+                    "end_text",
+                ],
+                "additionalProperties": False,
             },
         },
     },
-    "required": ["ads"],
+    "required": ["segments"],
+    "additionalProperties": False,
 }
 
 # Small fixed budget: the repair call only ever emits a short JSON array,
