@@ -961,12 +961,13 @@ SEED_NORMALIZATIONS = [
 # database package's transitive secrets_crypto -> cryptography chain.
 DEFAULT_SYSTEM_PROMPT = """Analyze this podcast transcript and identify ALL advertisement segments.
 
+The transcript's cues are formatted as `[start - end] Text`, where `start` and `end` are timestamps expressed in seconds (e.g., `12.3s`).
+
 DETECTION RULES:
 - Host-read sponsor segments ARE ads. Any product promotion for compensation is an ad.
 - An ad MUST contain promotional language in the transcript. You must be able to point to specific words (sponsor names, URLs, promo codes, product pitches, calls to action) that make it an ad.
 - Include the transition phrase ("let's take a break") in the ad segment, not just the pitch.
 - Ad breaks typically last 60-120 seconds. Shorter segments may indicate incomplete detection.
-- If no ads are found in this window, return: []
 
 WHAT IS NOT AN AD:
 - Silence, pauses, or dead air between segments -- these are normal production gaps, not ads
@@ -1030,25 +1031,10 @@ AD BOUNDARY RULES:
   - AFTER the final URL mention (they often repeat it)
 - MERGING: Multiple ads with gaps < 15 seconds = ONE segment
 
-WINDOW CONTEXT:
-This transcript may be a segment of a longer episode.
-- If an ad appears to START before this segment, mark start as the first timestamp
-- If an ad appears to CONTINUE past this segment, mark end as the last timestamp
-- Note partial ads in the reason field
-
 TIMESTAMP PRECISION:
-Use the exact START timestamp from the [Xs] marker of the first ad segment.
-Use the exact END timestamp from the [Xs] marker of the last ad segment.
-Do not interpolate or estimate times between segments.
-
-OUTPUT FORMAT:
-Return ONLY a valid JSON array. No explanation, no markdown.
-
-Each ad segment: {{"start": FLOAT_SECONDS, "end": FLOAT_SECONDS, "confidence": FLOAT_0_TO_1, "category": "sponsor|cross_promo|self_promo|interaction", "reason": "brief description", "end_text": "last 3-5 words"}}
-
-"category" is REQUIRED on every ad object, with no exceptions. A response where any object omits "category" is invalid, even if you are confident the category is obvious from the reason text. Always write the key. See CATEGORY below for the exact allowed values.
-
-ALL values for "start", "end", and "confidence" MUST be numeric (float). Never use strings like "high", "low", "medium", or percentages like "95%". Examples: "start": 45.0, "end": 82.0, "confidence": 0.95
+Use a cue's start timestamp (minus the `s`) when identifying the start of a segment.
+Use a cue's end timestamp when identifying the end of a segment.
+Do not interpolate or make up timestamps.
 
 CATEGORY:
 Every ad object MUST also include "category", set to exactly one of:
@@ -1057,6 +1043,24 @@ Every ad object MUST also include "category", set to exactly one of:
 - self_promo: a produced or inserted segment where the show promotes its own other content (another show, Patreon, merch, mailing list)
 - interaction: a produced or inserted segment asking listeners to subscribe, rate, review, or follow the show
 Three more categories exist (intro, outro, recap), but use them only when this prompt also contains a SHOW SEGMENTS section below. Without that section, always pick one of the four categories above.
+{sponsor_database}"""
+
+DEFAULT_SYSTEM_PROMPT_OUTPUT_AND_EXAMPLES = """
+
+OUTPUT FORMAT:
+
+Return valid JSON without markdown fences, prose, or commentary.
+{output_schema}
+<!--
+The "output_schema" section is inserted dynamically:
+- When the schema IS automatically shared with the model:
+  > Follow the structured-output schema strictly.
+- When the schema IS NOT automatically shared with the model:
+  > Follow this schema. Use `null` where applicable; do not invent additional properties.
+  > ```json
+  > { "schema": ... }
+  > ```
+-->
 
 EXAMPLE:
 [45.0s - 48.0s] That's a great point. Let's take a quick break.
@@ -1065,14 +1069,14 @@ EXAMPLE:
 [78.5s - 82.0s] That's athleticgreens.com/podcast.
 [82.5s - 86.0s] Now, back to our conversation.
 
-Output: [{{"start": 45.0, "end": 82.0, "confidence": 0.98, "category": "sponsor", "reason": "Athletic Greens sponsor read", "end_text": "athleticgreens.com/podcast"}}]
+Output: {"ads": [{"start": 45.0, "end": 82.0, "confidence": 0.98, "category": "sponsor", "reason": "Athletic Greens sponsor read", "end_text": "athleticgreens.com/podcast"}]}
 
 NOT AN AD EXAMPLE (silence/content gap):
 [290.0s - 293.0s] So that's really the core of what GPT-4 can do.
 [293.5s - 296.0s] [silence]
 [296.5s - 300.0s] Now the other thing I wanted to talk about is the fine-tuning process.
 
-Output: []
+Output: {"ads": []}
 
 SHORT BRAND TAGLINE EXAMPLE (this IS an ad):
 [874.2s - 877.0s] FreshField Market, your destination for what's next in nutrition.
@@ -1080,7 +1084,7 @@ SHORT BRAND TAGLINE EXAMPLE (this IS an ad):
 [886.0s - 893.0s] Whether you're training hard, living well, or chasing your best self,
 [893.0s - 898.5s] FreshField Market is where the future of wellness begins. Explore more at FreshField.
 
-Output: [{{"start": 874.2, "end": 898.5, "confidence": 0.95, "category": "sponsor", "reason": "FreshField Market network-inserted brand tagline ad", "end_text": "wellness begins. Explore more at FreshField"}}]
+Output: {"ads": [{"start": 874.2, "end": 898.5, "confidence": 0.95, "category": "sponsor", "reason": "FreshField Market network-inserted brand tagline ad", "end_text": "wellness begins. Explore more at FreshField"}]}
 
 Note: No promo code, no call to action -- but this is concentrated marketing copy
 for a brand with product positioning language. It is not editorial content.
@@ -1091,33 +1095,27 @@ CROSS-PROMO EXAMPLE (this IS an ad, and its category is NOT sponsor):
 sister podcast Startup Stories for interviews with founders every Tuesday.
 [528.0s - 531.0s] Now, back to today's episode.
 
-Output: [{{"start": 512.0, "end": 531.0, "confidence": 0.9, "category": "cross_promo", "reason": "Produced cross-promotion for the sister podcast Startup Stories", "end_text": "back to today's episode"}}]
+Output: {"ads": [{"start": 512.0, "end": 531.0, "confidence": 0.9, "category": "cross_promo", "reason": "Produced cross-promotion for the sister podcast Startup Stories", "end_text": "back to today's episode"}]}
 
 Note: a different voice promoting a different show, inserted by the platform or network.
-Not a sponsor read, so "category" is "cross_promo", not "sponsor".{sponsor_database}"""
+Not a sponsor read, so "category" is "cross_promo", not "sponsor".
+"""
 
 # Opt-in addition to DEFAULT_SYSTEM_PROMPT (issue #565): appended only when
 # detect_show_segments is enabled. ad_detector.AdDetector appends it after
 # any operator override of system_prompt, so it applies even when customized.
-SHOW_SEGMENTS_PROMPT_SECTION = """SHOW SEGMENTS:
+SHOW_SEGMENTS_PROMPT_SECTION = """
+
+SHOW SEGMENTS:
 This podcast has also asked for its show-structure segments to be identified. In addition to ads, look for these and return them in the same JSON array, each with its own category:
 - intro: the show's opening theme music and/or host introduction, before the actual episode content starts
 - outro: the show's closing credits, sign-off, or theme music, after the episode content ends
 - recap: a produced "coming up" preview, a headline bumper, or a "listen to this next" segment: something that previews or summarizes content rather than being the content itself
 
-"category" is REQUIRED on these objects too, set to exactly "intro", "outro", or "recap". A show segment reported without "category" is invalid, the same as an ad reported without one.
-
 RULES FOR SHOW SEGMENTS:
 - A cold open is content, not intro. If the host starts the episode with a quote, a story, or a hook before the theme music, that is content. Do not flag it.
 - Only flag a span that is clearly theme music, closing credits, or housekeeping. If you are unsure whether something is a show segment, do not flag it.
-- Use the same timestamp discipline as ads: use the exact [Xs] marker timestamps from the transcript, do not interpolate or estimate.
-
-OUTRO EXAMPLE:
-[2324.5s - 2360.0s] That's the show for today, thanks for listening, and we'll see you next time.
-[2360.0s - 2381.1s] [closing theme music]
-
-Output: [{"start": 2324.5, "end": 2381.1, "confidence": 0.85, "category": "outro", "reason": "Show sign-off and closing theme music", "end_text": "[closing theme music]"}]
-"""
+- Use the same timestamp discipline as ads: use the exact [Xs] marker timestamps from the transcript, do not interpolate or estimate."""
 
 
 # Provenance of a reprocess_requested_at stamp. The stamp itself only says

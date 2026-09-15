@@ -157,12 +157,11 @@ def format_window_prompt(
         f"{window_start/60:.1f}-{window_end/60:.1f} minutes ==="
     )
     if addressing_mode == "segment_ids":
-        rules = SEGMENT_ID_WINDOW_RULES
+        rules = strip_comments_from_prompt(SEGMENT_ID_WINDOW_RULES)
     else:
         rules = (
-            "\n- Use absolute timestamps from transcript (as shown in brackets)"
-            "\n- If an ad starts before this window, use the first timestamp with note \"continues from previous\""
-            f"\n- If an ad extends past this window, use {window_end:.1f} with note \"continues in next\"\n"
+            "\n- If an ad starts before this window, use the first timestamp with reason \"continues from previous\""
+            f"\n- If an ad extends past this window, use {window_end:.1f} with reason \"continues in next\"\n"
         )
     window_context = header + rules
     return strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
@@ -175,29 +174,15 @@ def format_window_prompt(
 
 SEGMENT_ID_SYSTEM_SECTION = """
 
-ADDRESSING MODE: SEGMENT IDS
-The transcript is a numbered list; each line starts with its [id]. For every
-detection you report, replace the "start" and "end" timestamp fields with
-integer "start_id" and "end_id" fields: the ids of the FIRST and LAST
-transcript lines of the ad, inclusive. Refer to lines ONLY by the ids shown.
-Never output timestamps and never invent ids that do not appear in the
-transcript. All other rules (categories, confidence, reason) are unchanged.
+TRANSCRIPT IDS
+This particular transcript formats each cue as `[id] text` where id is the
+one-based index of the cue. There are no timestamps in this transcript.
+Use these cue ids when identifying the `start` and `end` of segments."""
 
-Ignore any earlier instruction to read [Xs] timestamp markers or to output
-numeric "start"/"end" seconds: in this mode the transcript lines carry [id]
-numbers only, and the JSON fields "start"/"end" are replaced by integer
-"start_id"/"end_id". All other rules (categories, confidence, reason) still
-apply."""
-
-
-SEGMENT_ID_WINDOW_RULES = (
-    "\n- Report start_id/end_id integers from the [id] brackets, "
-    "never timestamps"
-    "\n- If an ad starts before this window, use this window's first id "
-    "with note \"continues from previous\""
-    "\n- If an ad extends past this window, use this window's last id "
-    "with note \"continues in next\"\n"
-)
+SEGMENT_ID_WINDOW_RULES = """
+- If an ad starts before this window, use this window's first id with reason "continues from previous"
+- If an ad extends past this window, use this window's last id with reason "continues in next"
+"""
 
 
 def get_static_system_prompt() -> str:
@@ -634,8 +619,8 @@ def parse_id_ads_from_response(response_text: str, slug: str = None,
     for obj in raw:
         if not isinstance(obj, dict):
             continue
-        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id'))
-        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id'))
+        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id', 'start'))
+        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id', 'end'))
         if sid_lo is None or sid_hi is None:
             skipped_no_id += 1
             continue
@@ -769,33 +754,54 @@ AD_DETECTION_JSON_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "start": {"type": "number"},
-                    "end": {"type": "number"},
-                    "start_id": {"type": "integer"},
-                    "end_id": {"type": "integer"},
-                    # The prompt requires end_text on every segment and the
-                    # sponsor extractors read these names; a schema-enforcing
-                    # decoder would silently strip anything absent here.
-                    "end_text": {"type": "string"},
-                    # Same enum as the repair schema above: an enforcing
-                    # decoder cannot emit a synonym the repair map translates.
-                    "category": {"type": "string", "enum": list(SEGMENT_CATEGORIES)},
-                    "confidence": {"type": "number"},
-                    "reason": {"type": "string"},
-                    "note": {"type": "string"},
-                    # Described on the extractor's first-choice field only:
-                    # the model follows the schema here, so repeating it on all
-                    # seven adds tokens and invites the multi-fill it warns off.
-                    **{name: ({"type": "string",
-                               "description": SPONSOR_ALIAS_FIELD_DESCRIPTION}
-                              if name == SPONSOR_PRIORITY_FIELDS[0]
-                              else {"type": "string"})
-                       for name in SPONSOR_PRIORITY_FIELDS},
+                    "start": {
+                        "type": "number",
+                        # documented in the system prompt
+                    },
+                    "end": {
+                        "type": "number",
+                        # documented in the system prompt
+                    },
+                    "end_text": {
+                        "type": "string",
+                        "description": (
+                            "The exact last 3-5 words of the segment"
+                        ),
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": list(SEGMENT_CATEGORIES),
+                        # documented in the system prompt
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": (
+                            "Confidence of the category assignment, from 0 to 1"
+                        ),
+                    },
+                    "reason": {
+                        "type": ["string", "null"],
+                        "description": "Brief 1 sentence description",
+                    },
+                    "sponsor": {
+                        "type": ["string", "null"],
+                        "description": (
+                            "The sponsor (advertiser/brand/company) or product named "
+                            "in a `sponsor` segment (prefer sponsor name when known). "
+                            "`null` for other segments"
+                        )
+                    },
                 },
+                "required": [
+                        "start", "end", "end_text", "category", "confidence",
+                        "reason", "sponsor",
+                    ],
+                "additionalProperties": False
             },
         },
     },
     "required": ["ads"],
+    "additionalProperties": False
 }
 
 # Small fixed budget: the repair call only ever emits a short JSON array,

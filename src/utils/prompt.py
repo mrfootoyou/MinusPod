@@ -129,7 +129,7 @@ def scrub_description(description: str|None, max_length: int = -1, split_locatio
         description = description[:clip_begin] + "..." + description[clip_end:]
     return description
 
-def strip_comments_from_prompt(prompt: str|None) -> str|None:
+def strip_comments_from_prompt(prompt: str|None) -> str:
     """Remove HTML-style comments from the prompt following markdown
     conventions.
 
@@ -147,6 +147,6 @@ def strip_comments_from_prompt(prompt: str|None) -> str|None:
         -->
     """
     if not prompt:
-        return prompt
+        return ""
     pattern = r'^([ ]{0,3})<!--(?:.|\n)*?-->(?:\r?\n)?|<!--.*?-->'
     return re.sub(pattern, r'\1', prompt, flags=re.MULTILINE)
