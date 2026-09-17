@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from ad_detector import AdDetector
 from ad_detector.prompts import (
-    SEGMENT_ID_SYSTEM_SECTION, format_window_prompt,
+    format_window_prompt,
     parse_id_ads_from_response, resolve_segment_id_ads,
 )
 
@@ -81,21 +81,7 @@ def test_id_transcript_lines():
     assert ts_lines == ['[0.0s - 5.0s] hello', '[5.0s - 9.0s] world']
 
 
-def test_system_section_mentions_ids_not_timestamps():
-    assert 'start_id' in SEGMENT_ID_SYSTEM_SECTION
-    assert 'end_id' in SEGMENT_ID_SYSTEM_SECTION
-
-
-def test_system_section_supersedes_timestamp_instructions():
-    # The base system prompts (user-editable, stored in DB) still tell the
-    # model to read [Xs] markers and emit numeric start/end; this section
-    # must explicitly override that so ID mode and the base prompt don't
-    # conflict.
-    assert '[Xs]' in SEGMENT_ID_SYSTEM_SECTION
-    assert 'Ignore any earlier instruction' in SEGMENT_ID_SYSTEM_SECTION
-
-
-def _window_kwargs():
+def _window_kwargs() -> dict:
     return dict(
         podcast_name='Test', episode_title='Ep1',
         description_section='', transcript_lines=['[0] hello'],
@@ -106,12 +92,10 @@ def _window_kwargs():
 
 def test_window_prompt_rules_are_mode_exclusive():
     id_out = format_window_prompt(**_window_kwargs(), addressing_mode='segment_ids')
-    assert 'start_id' in id_out
-    assert 'Use absolute timestamps' not in id_out
+    assert 'Transcript with indexes:' in id_out
 
     ts_out = format_window_prompt(**_window_kwargs(), addressing_mode='timestamps')
-    assert 'Use absolute timestamps' in ts_out
-    assert 'start_id' not in ts_out
+    assert 'Transcript with timestamps:' in ts_out
 
 
 SEGS = [{'sid': i, 'start': i * 10.0, 'end': i * 10.0 + 10.0,
