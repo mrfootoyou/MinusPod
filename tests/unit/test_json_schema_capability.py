@@ -16,6 +16,7 @@ from llm_client import (
     OpenAICompatibleClient, _rejects_json_mode, supports_json_schema_for_calls,
     _JSON_FORMAT_SETTING_KEY as JSON_FORMAT_KEY,
     _JSON_SCHEMA_SETTING_KEY as JSON_SCHEMA_KEY,
+    _JSON_SCHEMA_SHARED_WITH_MODEL_SETTING_KEY as JSON_SCHEMA_SHARED_WITH_MODEL_KEY,
 )
 from utils.llm_call import call_llm_for_window
 
@@ -32,9 +33,11 @@ def _make_client():
     )
     client._token_param_cache.clear()
     client._client = MagicMock()
-    client._set_support = lambda model, schema=None, obj=None: (
+    client._set_support = lambda model, schema=None, obj=None, shared_with_model=False: (
         _seed(client, JSON_SCHEMA_KEY, model, schema),
         _seed(client, JSON_FORMAT_KEY, model, obj),
+        _seed(client, JSON_SCHEMA_SHARED_WITH_MODEL_KEY, model, 
+              shared_with_model if schema is not None else None),
     )
     return client
 
@@ -83,18 +86,63 @@ class TestRejectsJsonSchema:
 
 
 class TestProbe:
+    _model_support_json_schema_and_knows_about_schema = '{"answer":"pumpkin","error":null,"foo":null}'
+    _model_support_json_schema_but_doesn_not_know_about_schema = '{"answer":null,"error":"no response schema","foo":null}'
+    _model_support_json_object = '{"error":"no response schema"}'
+    _model_doesnt_support_structured_output = 'Error: no response schema'
+
     def teardown_method(self):
-        _db().clear_setting('llm_json_schema_supported')
+        _db().clear_setting(JSON_SCHEMA_KEY)
         _invalidate()
 
-    def test_success_persists_true(self):
+    def test_model_support_json_object(self):
         client = _make_client()
-        client._client.chat.completions.create.return_value = _mock_response()
+        client._client.chat.completions.create.return_value = _mock_response(
+            self._model_support_json_object)
+
+        result = client.probe_json_format_support(model='test-model')
+
+        assert result is True
+        assert client._get_json_format_supported('test-model') is True
+        assert json.loads(_db().get_setting(JSON_FORMAT_KEY)) == {
+            'test-model': True}
+
+    def test_model_support_json_schema_and_knows_about_schema(self):
+        client = _make_client()
+        client._client.chat.completions.create.return_value = _mock_response(
+            self._model_support_json_schema_and_knows_about_schema)
+
         result = client.probe_json_schema_support(model='test-model')
+
         assert result is True
         assert client._get_json_schema_supported('test-model') is True
-        assert json.loads(_db().get_setting('llm_json_schema_supported')) == {
+        assert client._get_json_schema_shared_with_model_supported('test-model') is True
+        assert json.loads(_db().get_setting(JSON_SCHEMA_KEY)) == {
             'test-model': True}
+        assert json.loads(_db().get_setting(JSON_SCHEMA_SHARED_WITH_MODEL_KEY)) == {
+            'test-model': True}
+
+    def test_model_support_json_schema_but_doesnt_know_about_schema(self):
+        client = _make_client()
+        client._client.chat.completions.create.return_value = _mock_response(
+            self._model_support_json_schema_but_doesn_not_know_about_schema)
+
+        result = client.probe_json_schema_support(model='test-model')
+
+        assert result is True
+        assert client._get_json_schema_supported('test-model') is True
+        assert client._get_json_schema_shared_with_model_supported('test-model') is False
+
+    def test_model_doesnt_support_structured_output(self):
+        client = _make_client()
+        client._client.chat.completions.create.return_value = _mock_response(
+            self._model_doesnt_support_structured_output)
+
+        result = client.probe_json_schema_support(model='test-model')
+
+        assert result is False
+        assert client._get_json_schema_supported('test-model') is False
+        assert client._get_json_schema_shared_with_model_supported('test-model') is False
 
     def test_rejection_persists_false(self):
         client = _make_client()
@@ -102,7 +150,7 @@ class TestProbe:
             "400 json_schema is not supported")
         result = client.probe_json_schema_support(model='test-model')
         assert result is False
-        assert json.loads(_db().get_setting('llm_json_schema_supported')) == {
+        assert json.loads(_db().get_setting(JSON_SCHEMA_KEY)) == {
             'test-model': False}
 
     def test_unexpected_400_inconclusive(self):
@@ -110,19 +158,22 @@ class TestProbe:
         client._client.chat.completions.create.side_effect = _bad_request_error(
             "400 max_tokens too large")
         assert client.probe_json_schema_support(model='test-model') is None
-        assert _db().get_setting('llm_json_schema_supported') is None
+        assert _db().get_setting(JSON_SCHEMA_KEY) is None
 
     def test_per_model_answers_do_not_leak(self):
         """One endpoint, two models: a rejection by one must not disable the
         other (#693)."""
         client = _make_client()
-        client._client.chat.completions.create.return_value = _mock_response()
+        client._client.chat.completions.create.return_value = _mock_response(
+            self._model_support_json_schema_and_knows_about_schema)
         client.probe_json_schema_support(model='strict-model')
+
         client._client.chat.completions.create.side_effect = _bad_request_error(
             "400 json_schema is not supported")
         client.probe_json_schema_support(model='loose-model')
         _invalidate()
-        assert json.loads(_db().get_setting('llm_json_schema_supported')) == {
+
+        assert json.loads(_db().get_setting(JSON_SCHEMA_KEY)) == {
             'strict-model': True, 'loose-model': False}
         assert client._get_json_schema_supported('strict-model') is True
         assert client._get_json_schema_supported('loose-model') is False
@@ -187,9 +238,9 @@ class TestSupportsJsonSchemaForCalls:
         else:
             _db().set_setting('llm_json_schema_enabled', 'true' if enabled else 'false')
         if probed is None:
-            _db().clear_setting('llm_json_schema_supported')
+            _db().clear_setting(JSON_SCHEMA_KEY)
         else:
-            _db().set_setting('llm_json_schema_supported',
+            _db().set_setting(JSON_SCHEMA_KEY,
                               json.dumps({'m': bool(probed)}))
         _invalidate()
 
@@ -197,7 +248,7 @@ class TestSupportsJsonSchemaForCalls:
         self._previous = (
             _db().get_setting('llm_provider'),
             _db().get_setting('llm_json_schema_enabled'),
-            _db().get_setting('llm_json_schema_supported'),
+            _db().get_setting(JSON_SCHEMA_KEY),
         )
 
     def teardown_method(self):
@@ -211,9 +262,9 @@ class TestSupportsJsonSchemaForCalls:
         else:
             _db().set_setting('llm_json_schema_enabled', enabled)
         if probed is None:
-            _db().clear_setting('llm_json_schema_supported')
+            _db().clear_setting(JSON_SCHEMA_KEY)
         else:
-            _db().set_setting('llm_json_schema_supported', probed)
+            _db().set_setting(JSON_SCHEMA_KEY, probed)
         _invalidate()
 
     def test_false_for_anthropic_even_when_enabled_and_probed(self):
@@ -241,7 +292,7 @@ class TestSupportsJsonSchemaForCalls:
     def test_legacy_endpoint_wide_value_answers_every_model(self):
         """DBs written before the per-model map hold a bare 'true'."""
         self._configure('openai-compatible', enabled=True)
-        _db().set_setting('llm_json_schema_supported', 'true')
+        _db().set_setting(JSON_SCHEMA_KEY, 'true')
         _invalidate()
         assert supports_json_schema_for_calls('any-model') is True
 

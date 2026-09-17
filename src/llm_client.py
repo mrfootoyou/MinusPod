@@ -85,6 +85,7 @@ io_logger = logging.getLogger('podcast.llm_io')
 # endpoint does not support response_format: {"type": "json_object"} natively.
 _JSON_FORMAT_SETTING_KEY = 'llm_json_format_supported'
 _JSON_SCHEMA_SETTING_KEY = 'llm_json_schema_supported'
+_JSON_SCHEMA_SHARED_WITH_MODEL_SETTING_KEY = 'llm_json_schema_shared_with_model'
 # (base_url, model) pairs whose probe already ran inconclusively this process:
 # verify uses force_new clients, so without this memo an always-inconclusive
 # endpoint would be probed again on every verification (~5 min cadence).
@@ -367,6 +368,25 @@ def supports_json_schema_for_calls(model: str | None = None) -> bool:
         return False
     return _format_flag_for(_JSON_SCHEMA_SETTING_KEY, model) is True
 
+def get_json_schema_automatically_shared_with_model(model: str | None = None) -> bool:
+    """Structured-output gate for OpenAI-compatible endpoints (#693/#694).
+    Returns True if the JSON schema is automatically shared with the model,
+    False otherwise.
+
+    When the JSON schema is automatically shared with the model, there is no
+    need to include it in the system prompt (doing so wastes tokens).
+
+    Deliberately narrower than llm_capabilities.supports_json_schema, which
+    answers for Anthropic: a json_schema request on the Anthropic path forces
+    a tool_choice call, and Anthropic rejects that alongside the extended
+    thinking a configured reasoning budget turns on. Only the category-repair
+    site, which sends no reasoning budget, ORs the two. Do not merge them.
+    """
+    if get_effective_provider() != PROVIDER_OPENAI_COMPATIBLE:
+        return False
+    if not coerce_bool_setting(_get_cached_setting('llm_json_schema_enabled')):
+        return False
+    return _format_flag_for(_JSON_SCHEMA_SHARED_WITH_MODEL_SETTING_KEY, model) is True
 
 def get_effective_base_url() -> str:
     """Return the active OpenAI base URL, checking DB first then env var."""
@@ -1099,6 +1119,7 @@ class OpenAICompatibleClient(LLMClient):
         self._format_support: dict[str, dict[str, bool]] = {
             _JSON_FORMAT_SETTING_KEY: {},
             _JSON_SCHEMA_SETTING_KEY: {},
+            _JSON_SCHEMA_SHARED_WITH_MODEL_SETTING_KEY: {},
         }
 
     def _ensure_client(self):
@@ -1463,6 +1484,10 @@ class OpenAICompatibleClient(LLMClient):
         """json_schema support for one model (#693)."""
         return self._get_format_support(_JSON_SCHEMA_SETTING_KEY, model)
 
+    def _get_json_schema_shared_with_model_supported(self, model: str) -> bool | None:
+        """json_schema shared with model support for one model."""
+        return self._get_format_support(_JSON_SCHEMA_SHARED_WITH_MODEL_SETTING_KEY, model)
+
     def probe_json_format_support(self, model: str | None = None) -> bool | None:
         """Send a minimal completion to test json_object support for `model`."""
         return self._probe_format_support('json_object', model)
@@ -1483,6 +1508,9 @@ class OpenAICompatibleClient(LLMClient):
         """
         self._ensure_client()
 
+        if kind != 'json_object' and kind != 'json_schema':
+            raise ValueError(f"Unsupported kind: {kind}")
+
         if model is None:
             models = self.list_models()
             if not models:
@@ -1490,25 +1518,86 @@ class OpenAICompatibleClient(LLMClient):
                 return None
             model = models[0].id
 
-        from openai import BadRequestError
-        token_param = self._token_param_cache.get(model, "max_completion_tokens")
+        # Craft a prompt to test the model's adherence to a specific schema.
+        systemPrompt = ''
+        userPrompt = ''
+        responseSchema = None
+        if kind == 'json_object':
+            # To test if the backend supports 'json_object' output, we need a
+            # system prompt that is conducive to a JSON reply w/o explicitly
+            # telling it to use JSON.
+            systemPrompt = (
+                "You are pretending to be an unhelpful assistant. You must "
+                "reply to all queries with the error: 'Bad request'."
+            )
+            userPrompt = "What is 1 divided by 0?"
+            # If the backend supports 'json_object', it should coerse the
+            # model's output to something like: { "error": "Bad request" }
+
+        elif kind == 'json_schema':
+            # We want to test two things here:
+            # 1. Whether the backend strictly enforces the schema.
+            # 2. Whether the model is aware of the schema.
+            #
+            # Some backends do both: they enforce the schema AND automatically
+            # share it with the model (e.g. OpenAI, Google). In these cases we
+            # can save tokens by NOT INCLUDING the schema in our prompts.
+            #
+            # Other backends enforce the schema, but the model is unaware of
+            # it (e.g. Ollama). In these cases we MUST INCLUDE the schema in
+            # our system prompt.
+            #
+            # Still other backends silently ignore the requested format
+            # (OpenRouter with gemini-3.8-flash [bug has been fixed]).
+            #
+            # Goal #1: Tell the model to return a response that slightly
+            # deviates from the requested schema. If the backend enforces the
+            # schema, it will correct the deviation.
+            # Goal #2: Use a prompt that asks the model to reveal information
+            # that only exists in the schema. 
+            responseSchema = {
+                "strict": True,
+                "schema": {
+                    "description": "Respond with `answer` or `error`. Use `null` when applicable.",
+                    "type": "object",
+                    "properties": {
+                        "answer": { "type": ["string", "null"] },
+                        "error": { "type": ["string", "null"] },
+                        "foo": {
+                            "type": ["string", "null"],
+                            "description": "pumpkin",
+                        },
+                    },
+                    "required": ["answer","error","foo"],
+                    "additionalProperties": False,
+                }
+            }
+            systemPrompt = (
+                "You are a helpful assistant. Answer succinctly when asked "
+                "about this chat's response schema.\n"
+                "Your response must be *pure* JSON according to the specified "
+                "schema. If you don't have access to the response schema "
+                'then simply reply with {"err": "no response schema"}.\n'
+                'Example reply: {"ans": "<your answer>"}'
+                # Note: the actual property names are 'answer' and 'error'.
+            )
+            userPrompt = (
+                "Regarding this chat's response schema, what is the exact "
+                "description of property `foo`?"
+            )
+
+        max_completion_tokens = self._token_param_cache.get(model, "max_completion_tokens")
         probe_kwargs = {
             "model": model,
-            token_param: 10,
+            max_completion_tokens: 500, # should be enough even for thinking models
             "messages": [
-                {"role": "system", "content": "Respond with JSON."},
-                {"role": "user", "content": '{"ok": true}'},
+                {"role": "system", "content": systemPrompt},
+                {"role": "user", "content": userPrompt},
             ],
             "response_format": (
                 {"type": "json_object"} if kind == 'json_object' else {
                     "type": "json_schema",
-                    "json_schema": {
-                        "name": "probe",
-                        "schema": {
-                            "type": "object",
-                            "properties": {"ok": {"type": "boolean"}},
-                        },
-                    },
+                    "json_schema": responseSchema,
                 }
             ),
             "timeout": HTTP_TIMEOUT_API,
@@ -1518,28 +1607,68 @@ class OpenAICompatibleClient(LLMClient):
         # the static list / learned memo; see model_omits_temperature().
         if not model_omits_temperature(model, _omit_temperature_override()):
             probe_kwargs["temperature"] = 0.0
-        url = safe_url_for_log(self.base_url, keep_path=True)
-        subject = f"{kind} ({model} at {url})"
+
+        subject = f"{kind} ({model} at {safe_url_for_log(self.base_url, keep_path=True)})"
+        model_reply = None
+        from openai import BadRequestError
         try:
-            self._client.chat.completions.create(**probe_kwargs)
-            supported = True
-            logger.info(f"Endpoint supports response_format {subject}")
+            msg = self._client.chat.completions.create(**probe_kwargs)
+            model_reply = msg.choices[0].message.content if msg.choices else None
+            logger.debug(f"{subject} probe got reply: {model_reply}")
         except BadRequestError as e:
             if not _rejects_json_mode(str(e)):
-                logger.warning(f"{kind} probe got unexpected 400: {e}")
+                logger.warning(f"{subject} probe got unexpected 400: {e}")
                 return None
-            supported = False
-            logger.info(
-                f"Endpoint does not support response_format {subject}; "
-                + ("schema requests will downgrade to json_object"
-                   if kind == 'json_schema' else "will use prompt injection fallback")
-            )
+            pass
         except Exception as e:
-            logger.warning(f"{kind} probe failed (non-fatal): {e}")
+            logger.warning(f"{subject} probe failed (non-fatal): {e}")
             return None
 
-        self._record_format_support(_PROBE_SETTING_KEYS[kind], model, supported)
-        return supported
+        parsed_reply = None
+        if isinstance(model_reply, str):
+            try:
+                parsed_reply = json.loads(model_reply or "")
+            except json.JSONDecodeError:
+                pass # not a JSON response
+
+        # verify the reply against the expected response format
+        format_supported = False
+        schema_shared_with_model = None # n/a
+
+        if kind == 'json_object':
+            # assume supported if the response is a dict
+            format_supported = isinstance(parsed_reply, dict)
+
+        elif kind == 'json_schema':
+            # must be an dict containing either "answer" or "error" as a string
+            if isinstance(parsed_reply, dict):
+                answer = parsed_reply.get("answer", None)
+                error = parsed_reply.get("error", None)
+                if isinstance(answer, str) or isinstance(error, str):
+                    # Goal #1 achieved: The backend coerced the abbreviated
+                    # property names mentioned in the prompt to the actual
+                    # schema names.
+                    format_supported = True
+                    # Goal #2: If the answer contains "pumpkin", then the
+                    # backend automatically shared the schema with the model
+                    schema_shared_with_model = \
+                        isinstance(answer, str) and "pumpkin" in answer.lower()
+
+        if format_supported:
+            logger.info(f"Endpoint supports response_format {subject}")
+            if schema_shared_with_model is not None:
+                logger.info(f"Schema is {'' if schema_shared_with_model else 'NOT '}automatically shared with the model for {subject}")
+        else:
+            logger.info(
+                f"Endpoint does not support response_format {subject}; "
+                + "will use prompt injection fallback"
+                + (" and schema requests will downgrade to json_object" if kind == 'json_schema' else "")
+            )
+
+        self._record_format_support(_PROBE_SETTING_KEYS[kind], model, format_supported)
+        if schema_shared_with_model is not None:
+            self._record_format_support(_JSON_SCHEMA_SHARED_WITH_MODEL_SETTING_KEY, model, schema_shared_with_model)
+        return format_supported
 
     def _probe_json_schema_if_enabled(self, fallback_model: str) -> None:
         """Probe json_schema support for each model the pipeline will use.

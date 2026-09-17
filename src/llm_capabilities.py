@@ -231,6 +231,11 @@ def supports_json_schema(provider: str) -> bool:
     """
     return (provider or '').lower() in _JSON_SCHEMA_SUPPORTED_PROVIDERS
 
+def is_json_schema_shared_with_model(provider: str) -> bool:
+    """True when ``provider`` is known to automatically share JSON schema
+    with the model.
+    """
+    return (provider or '').lower() in _JSON_SCHEMA_SUPPORTED_PROVIDERS
 
 def is_temperature_rejection_error(error: Exception) -> bool:
     """True for a 400 whose body indicates the model rejects ``temperature``
