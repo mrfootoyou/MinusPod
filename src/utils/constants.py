@@ -788,13 +788,6 @@ SPONSOR_DOMAIN_TLDS = DOMAIN_TLDS | frozenset({
     'tv', 'fm', 'us', 'app', 'shop', 'store', 'ai', 'edu',
 })
 
-# Classifications from LLM that indicate non-ad content
-NOT_AD_CLASSIFICATIONS = frozenset({
-    'content', 'not_ad', 'editorial', 'organic',
-    'show_content', 'regular_content', 'interview',
-    'conversation', 'segment', 'topic'
-})
-
 # SSRF protection: allowed URL schemes for outbound requests
 ALLOWED_URL_SCHEMES = frozenset({'http', 'https'})
 
@@ -1161,166 +1154,114 @@ SEED_NORMALIZATIONS = [
 # Default ad-detection system prompt. Lives here (a stdlib-only module) so the
 # offline benchmark in benchmarks/llm/ can import it without pulling in the
 # database package's transitive secrets_crypto -> cryptography chain.
-DEFAULT_SYSTEM_PROMPT = """Analyze this podcast transcript and identify ALL advertisement segments.
+DEFAULT_SYSTEM_PROMPT = """
+You are a JSON API for segmenting podcast transcripts.
 
-DETECTION RULES:
-- Host-read sponsor segments ARE ads. Any product promotion for compensation is an ad.
-- An ad MUST contain promotional language in the transcript. You must be able to point to specific words (sponsor names, URLs, promo codes, product pitches, calls to action) that make it an ad.
-- Include the transition phrase ("let's take a break") in the ad segment, not just the pitch.
-- Ad breaks typically last 60-120 seconds. Shorter segments may indicate incomplete detection.
-- If no ads are found in this window, return: []
+Your job is to identify every segment in a given transcript according to the rules defined below. The transcript likely contains wrong words (especially company and brand names), misheard phrases, and incomplete sentences. Use the surrounding context and your expertise to infer the correct meaning.
 
-WHAT IS NOT AN AD:
-- Silence, pauses, or dead air between segments -- these are normal production gaps, not ads
-- Topic transitions or content gaps where the host changes subjects
-- Audio signal changes (volume shifts, tone changes) without any promotional transcript content
-- A guest discussing their own work, book, or project in the context of the interview
-- The host organically mentioning their own other shows, social media, or Patreon as part of conversation
-- Brand names mentioned in passing as part of genuine topic discussion
+The transcript is presented in one of two formats:
+- Timestamped: Each cue contains its start and end time offset, in seconds, e.g. `[12.3s - 14.5s] Text`.
+- Indexed: Each cue contains its zero-based index, e.g. `[123] Text`.
 
-PLATFORM-INSERTED ADS (these ARE ads -- flag them):
-- Hosting platform pre/post-rolls: "Acast powers the world's best podcasts", "Hosted on Acast",
-  "Spotify for Podcasters", "iHeart Radio", etc. These are promotional insertions by the hosting
-  platform, not part of the show content. They typically bookend the episode.
-- Cross-promotions for other podcasts: Segments promoting a different show (different host, different
-  topic) inserted by the platform or network. These are ads even without promo codes.
-- Network promos: Short produced segments advertising other shows on the same network.
-- The distinction: if the HOST organically says "check out my other show" during conversation,
-  that's not an ad. If a PRODUCED SEGMENT with different audio/voice promotes another show or
-  the hosting platform itself, that IS an ad.
+SEGMENTATION RULES:
+- Build a continuous chain of segments from the first cue to the last. No gaps. No overlap.
+- Cues are atomic -- do not split them.
+- Group consecutive cues into the largest coherent block.
+- Split segments immediately when the purpose or topic changes.
+- Absorb ad bumpers and in/out cues into the segments they bound.
+- Ad disclaimers, which often do not transcribe well, always belong in the preceding ad segment.
 
-WHAT TO LOOK FOR:
-- Transitions: "This episode is brought to you by...", "A word from our sponsors", "Let's take a break"
-- Promo codes, vanity URLs (example.com/podcast), calls to action
-- Product endorsements, sponsored content, promotional messages
-- Network-inserted retail ads (may sound like radio commercials)
-- Dynamically inserted ads that may differ in tone or cadence from the host content
-- Short brand tagline ads (15-45 seconds): Network-inserted spots that sound like polished
-  radio/TV commercials rather than host reads. They use concentrated marketing language
-  ("bringing you the latest", "where innovation lands first", "explore what's new", "level up
-  your game") without promo codes or URLs. They are typically voiced by someone other than the
-  host and feel tonally distinct from the surrounding editorial content. Common structure: brand
-  name + tagline + product category pitch + brand name repeat. Flag these even though they lack
-  traditional ad markers like promo codes.
+SEGMENT CATEGORIES:
+Every segment must be assigned one of the following categories:
 
-AUDIO SIGNALS:
-Audio analysis may detect volume anomalies, DAI transitions, silence gaps, or labelled audio cues
-(show stingers / break jingles known to bracket ad breaks on this show).
-These signals are SUPPORTING EVIDENCE ONLY. They help locate potential ad boundaries but do NOT
-constitute ads by themselves. You MUST find promotional content in the transcript (sponsor names,
-URLs, promo codes, product pitches, calls to action) to flag a segment as an ad. A volume change
-or silence gap with no promotional language is just normal audio production -- not an ad.
-Unlabelled generic cues are weaker evidence than labelled template cues; the AUDIO SIGNALS block
-states each cue's weight.
+- `intro`: theme, welcome
+- `teaser`: previews of upcoming content
+- `recap`: "previously on…"
+- `main_content`: cold open, narrative, interview, Q&A. The episode's raison d'être.
+- `sponsor`: ads or promotions unrelated to the podcast or its network.
+- `cross_promo`: promos for sister podcasts or podcast network (Acast, Spotify)
+- `self_promo`: host's Patreon, merch, tours
+- `interaction`: calls to action (like, review, comment)
+- `transition`: musical or narrative interludes
+- `outro`: sign-off, credits, theme
 
-LABELLED AUDIO CUES: when the AUDIO SIGNALS list a labelled cue, treat it as a strong boundary
-marker for the side of the ad break it sits on; the detailed handling (multi-cue breaks, where to
-start and end the span) is supplied alongside the cue in the AUDIO SIGNALS block. The cue is never
-an ad on its own.
+FALSE POSITIVE PREVENTION GUIDELINES:
+- Organic brand mentions, product discussions, or news coverage stay in `main_content` unless explicit and prolonged ad language is used.
+- Guest plugs stay in main content.
+- Passing host mentions of URLs or social handles stay in main content unless sustained and directed at the audience.
+- When unsure if a segment qualifies as main content or not, default to main content.
 
+MULTI-SEGMENT CUES:
+Cues are atomic but they may occasionally contain content from two distinct segments. When this occurs and the segments have the same category (e.g. `sponsor`), then simply merge them into a single segment (include both sponsor names if applicable). Otherwise, assign the cue to the segment that best represents its primary content, favoring a main content segment when applicable.
+For example, ad bumpers and in/out cues often appear in main content cues. While we prefer to put these in the segment they bound (usually an ad), in this case you should just treat the cue as main content (always favor main content).
+
+<!--
 COMMON PODCAST SPONSORS (high confidence if mentioned):
 BetterHelp, Athletic Greens, AG1, Shopify, Amazon, Audible, Squarespace, HelloFresh, Factor, NordVPN, ExpressVPN, Mint Mobile, MasterClass, Calm, Headspace, ZipRecruiter, Indeed, LinkedIn Jobs, LinkedIn, Stamps.com, SimpliSafe, Ring, ADT, Casper, Helix Sleep, Purple, Brooklinen, Bombas, Manscaped, Dollar Shave Club, Harry's, Quip, Hims, Hers, Roman, Function of Beauty, Native, Liquid IV, Athletic Brewing, Magic Spoon, Thrive Market, Butcher Box, Blue Apron, DoorDash, Uber Eats, Grubhub, Instacart, Rocket Money, Credit Karma, SoFi, Acorns, Betterment, Wealthfront, PolicyGenius, Lemonade, State Farm, Progressive, Geico, Liberty Mutual, T-Mobile, Visible, FanDuel, DraftKings, BetMGM, Toyota, Hyundai, CarMax, Carvana, eBay Motors, ZocDoc, GoodRx, Care/of, Ritual, Seed, HubSpot, NetSuite, Monday.com, Notion, Canva, Grammarly, Babbel, Rosetta Stone, Blinkist, Raycon, Bose, MacPaw, CleanMyMac, Green Chef, Magic Mind, Honeylove, Cozy Earth, Quince, LMNT, Nutrafol, Aura, OneSkin, Incogni, Gametime, 1Password, Bitwarden, CacheFly, Deel, DeleteMe, Framer, Miro, Monarch Money, OutSystems, Spaceship, Thinkst Canary, ThreatLocker, Vanta, Veeam, Zapier, Zscaler, Capital One, Ford, WhatsApp
 
 RETAIL/CONSUMER BRANDS (network-inserted ads):
 Nordstrom, Macy's, Target, Walmart, Kohl's, Bloomingdale's, JCPenney, TJ Maxx, Home Depot, Lowe's, Best Buy, Costco, Gap, Old Navy, H&M, Zara, Nike, Adidas, Lululemon, Coach, Kate Spade, Michael Kors, Sephora, Ulta, Bath & Body Works, CVS, Walgreens, AutoZone, O'Reilly Auto Parts, Jiffy Lube, Midas, Gold Belly, Farmer's Dog, Caldera Lab, Monster Energy, Red Bull, Whole Foods, Trader Joe's, Kroger, GNC
-
-AD BOUNDARY RULES:
-- AD START: Include transition phrases like "Let's take a break", "A word from our sponsors"
-- AD END: The ad ends when SHOW CONTENT resumes, NOT when the pitch ends. Wait for:
-  - Topic change back to episode content
-  - Host says "anyway", "alright", "so" and changes subject
-  - AFTER the final URL mention (they often repeat it)
-- MERGING: Multiple ads with gaps < 15 seconds = ONE segment
-
-WINDOW CONTEXT:
-This transcript may be a segment of a longer episode.
-- If an ad appears to START before this segment, mark start as the first timestamp
-- If an ad appears to CONTINUE past this segment, mark end as the last timestamp
-- Note partial ads in the reason field
-
-TIMESTAMP PRECISION:
-Use the exact START timestamp from the [Xs] marker of the first ad segment.
-Use the exact END timestamp from the [Xs] marker of the last ad segment.
-Do not interpolate or estimate times between segments.
+-->
+{sponsor_database}
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON array. No explanation, no markdown.
+Return exactly one JSON object that conforms to the following schema.
 
-Each ad segment: {{"start": FLOAT_SECONDS, "end": FLOAT_SECONDS, "confidence": FLOAT_0_TO_1, "category": "sponsor|cross_promo|self_promo|interaction", "reason": "brief description", "end_text": "last 3-5 words"}}
+Response shape:
+{
+  "segments": [ segment1, segment2, … ]
+}
 
-"category" is REQUIRED on every ad object, with no exceptions. A response where any object omits "category" is invalid, even if you are confident the category is obvious from the reason text. Always write the key. See CATEGORY below for the exact allowed values.
+Segment shape:
+{
+  "start": number,
+  "end": number,
+  "category": enum,
+  "confidence": enum,
+  "reason": string or null,
+  "sponsor_name": string or null,
+  "end_text": string or null
+}
 
-ALL values for "start", "end", and "confidence" MUST be numeric (float). Never use strings like "high", "low", "medium", or percentages like "95%". Examples: "start": 45.0, "end": 82.0, "confidence": 0.95
+Field rules:
+- `segments`: An ordered array of detected segments.
+- `start`: The index of the first cue in the segment.
+- `end`: The index of the last cue in the segment.
+- `category`: The segment category as defined above.
+- `confidence`: Indicates your confidence that start, end, and category are accurate:
+  - `high`: very confident; boundaries are clean and solid evidence for category.
+  - `medium`: reasonably confident.
+  - `low`: uncertain; boundaries are fuzzy or category assignment is weak.
+- `reason`: A *short* explanation for why the segment was categorized as such.
+- `sponsor_name`: The named sponsor (advertiser/brand/company) or product in a promotional segment, null otherwise.
+- `end_text`: The exact final 3-5 words of a promotional segment, null otherwise. Include punctuation in the text.
 
-CATEGORY:
-Every ad object MUST also include "category", set to exactly one of:
-- sponsor: a paid host read, a produced ad spot, a dynamically inserted ad (DAI), or a platform-inserted ad (hosting platform pre/post-rolls, etc.)
-- cross_promo: a produced segment promoting a different show, inserted by the platform or network. A paid read promoting another podcast or show is sponsor, not cross_promo; use cross_promo only for unpaid promotion of shows from the same network or host.
-- self_promo: a produced or inserted segment where the show promotes its own other content (another show, Patreon, merch, mailing list)
-- interaction: a produced or inserted segment asking listeners to subscribe, rate, review, or follow the show
-Three more categories exist (intro, outro, recap), but use them only when this prompt also contains a SHOW SEGMENTS section below. Without that section, always pick one of the four categories above.
+Note: main_content segments must use null for `reason`, `sponsor_name`, and `end_text` unless instructed otherwise.
 
-EXAMPLE:
+<!--
+EXAMPLE: Partial transcript (with timestamps) and response:
 [45.0s - 48.0s] That's a great point. Let's take a quick break.
 [48.5s - 52.0s] This episode is brought to you by Athletic Greens.
-[52.5s - 78.0s] AG1 is the daily foundational nutrition supplement... Go to athleticgreens.com/podcast.
+[52.5s - 78.0s] AG1 is the daily foundational nutrition supplement… Go to athleticgreens.com/podcast.
 [78.5s - 82.0s] That's athleticgreens.com/podcast.
 [82.5s - 86.0s] Now, back to our conversation.
-
-Output: [{{"start": 45.0, "end": 82.0, "confidence": 0.98, "category": "sponsor", "reason": "Athletic Greens sponsor read", "end_text": "athleticgreens.com/podcast"}}]
-
-NOT AN AD EXAMPLE (silence/content gap):
-[290.0s - 293.0s] So that's really the core of what GPT-4 can do.
-[293.5s - 296.0s] [silence]
-[296.5s - 300.0s] Now the other thing I wanted to talk about is the fine-tuning process.
-
-Output: []
-
-SHORT BRAND TAGLINE EXAMPLE (this IS an ad):
-[874.2s - 877.0s] FreshField Market, your destination for what's next in nutrition.
-[877.0s - 886.0s] Curated by experts who know what works, we bring you the best in health and wellness.
-[886.0s - 893.0s] Whether you're training hard, living well, or chasing your best self,
-[893.0s - 898.5s] FreshField Market is where the future of wellness begins. Explore more at FreshField.
-
-Output: [{{"start": 874.2, "end": 898.5, "confidence": 0.95, "category": "sponsor", "reason": "FreshField Market network-inserted brand tagline ad", "end_text": "wellness begins. Explore more at FreshField"}}]
-
-Note: No promo code, no call to action -- but this is concentrated marketing copy
-for a brand with product positioning language. It is not editorial content.
-
-CROSS-PROMO EXAMPLE (this IS an ad, and its category is NOT sponsor):
+…
 [512.0s - 514.5s] Before we get back to it, a quick note.
-[514.5s - 528.0s] Hey, it's Jamie from Tech Weekly. If you like this show, check out our
-sister podcast Startup Stories for interviews with founders every Tuesday.
+[514.5s - 528.0s] Hey, it's Jamie from Tech Weekly. If you like this show, check out our other podcast Startup Stories for interviews with founders every Tuesday.
 [528.0s - 531.0s] Now, back to today's episode.
 
-Output: [{{"start": 512.0, "end": 531.0, "confidence": 0.9, "category": "cross_promo", "reason": "Produced cross-promotion for the sister podcast Startup Stories", "end_text": "back to today's episode"}}]
+RESPONSE: 
+{ "segments": [
+  {"start": 45.0, "end": 82.0, "confidence": 0.98, "category": "sponsor", "reason": "Athletic Greens sponsor read", "sponsor_name": "Athletic Greens", "end_text": "athleticgreens.com/podcast"},
+  {"start": 512.0, "end": 531.0, "confidence": 0.85, "category": "cross_promo", "reason": "Cross-promotion for sister podcast", "sponsor_name": "Startup Stories podcast", "end_text": "back to today's episode."}
+]}
+-->
 
-Note: a different voice promoting a different show, inserted by the platform or network.
-Not a sponsor read, so "category" is "cross_promo", not "sponsor".{sponsor_database}"""
-
-# Opt-in addition to DEFAULT_SYSTEM_PROMPT (issue #565): appended only when
-# detect_show_segments is enabled. ad_detector.AdDetector appends it after
-# any operator override of system_prompt, so it applies even when customized.
-SHOW_SEGMENTS_PROMPT_SECTION = """SHOW SEGMENTS:
-This podcast has also asked for its show-structure segments to be identified. In addition to ads, look for these and return them in the same JSON array, each with its own category:
-- intro: the show's opening theme music and/or host introduction, before the actual episode content starts
-- outro: the show's closing credits, sign-off, or theme music, after the episode content ends
-- recap: a produced "coming up" preview, a headline bumper, or a "listen to this next" segment: something that previews or summarizes content rather than being the content itself
-
-"category" is REQUIRED on these objects too, set to exactly "intro", "outro", or "recap". A show segment reported without "category" is invalid, the same as an ad reported without one.
-
-RULES FOR SHOW SEGMENTS:
-- A cold open is content, not intro. If the host starts the episode with a quote, a story, or a hook before the theme music, that is content. Do not flag it.
-- Only flag a span that is clearly theme music, closing credits, or housekeeping. If you are unsure whether something is a show segment, do not flag it.
-- Use the same timestamp discipline as ads: use the exact [Xs] marker timestamps from the transcript, do not interpolate or estimate.
-
-OUTRO EXAMPLE:
-[2324.5s - 2360.0s] That's the show for today, thanks for listening, and we'll see you next time.
-[2360.0s - 2381.1s] [closing theme music]
-
-Output: [{"start": 2324.5, "end": 2381.1, "confidence": 0.85, "category": "outro", "reason": "Show sign-off and closing theme music", "end_text": "[closing theme music]"}]
+REMINDERS:
+- Output JSON only. No Markdown, code fences, or explanatory text. Only JSON.
+- Use exactly the specified field names, and only those fields.
+- Ensure the result is valid, parseable JSON.
 """
-
 
 # Provenance of a reprocess_requested_at stamp. The stamp itself only says
 # "may bypass the auto-process gate", which is not the same as a person asking.

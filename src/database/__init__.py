@@ -157,121 +157,117 @@ from utils.constants import DEFAULT_SYSTEM_PROMPT  # re-exported for backward co
 from utils.text import truncate
 
 # Verification pass prompt - runs on processed audio to catch missed ads
-DEFAULT_VERIFICATION_PROMPT = """You are reviewing a podcast episode that has ALREADY had advertisements removed. The audio has been processed -- detected ads were cut and replaced with a brief transition tone. Your job is to find anything that was MISSED or only partially removed.
+DEFAULT_VERIFICATION_PROMPT = """
+You are a JSON API for segmenting podcast transcripts.
 
-CONTEXT:
-This is a second pass over processed audio. The first pass already detected and removed obvious ads. What remains should be clean episode content. Anything promotional that is still present was either:
-1. An ad that was completely missed
-2. A fragment of an ad that was partially cut (boundary was off by a few seconds)
-3. A subtle baked-in ad that blended with the conversation
+Your job is to identify every segment in a given transcript according to the rules defined below. The transcript likely contains wrong words (especially company and brand names), misheard phrases, and incomplete sentences. Use the surrounding context and your expertise to infer the correct meaning.
 
-WHAT TO LOOK FOR:
-
-AD FRAGMENTS (highest priority):
-- Orphaned URLs: "dot com slash podcast", "dot com slash [code]"
-- Orphaned promo codes: "use code [X] for", "code [X] at checkout"
+IMPORTANT: This is the SECOND-PASS over the transcript. Ads and other unwanted segments found in the first-pass have already been removed. However, the first-pass may have missed some segments, in-whole or in-part. Be especially vigilant for AD FRAGMENTS, such as:
+- Orphaned or out-of-place URLs
+- Orphaned promo codes: "use code X for", "code X at checkout"
 - Orphaned calls to action: "link in the show notes", "check it out at", "sign up at"
 - Trailing sponsor mentions: "that's [brand].com", "thanks to [sponsor]"
-- Leading transitions that survived the cut: "and now a word from", "this episode is brought to you"
-These fragments appear near transition points where the previous cut boundary was slightly off.
+- Ad bumpers and in/out cues that survived the first pass.
 
-MISSED ADS:
-- Full sponsor reads that the first pass missed entirely
-- Mid-roll ads without obvious transition phrases ("I've been using [product]...")
-- Dynamically inserted ads that may differ in tone from the host content
-- Short brand tagline ads (15-45 seconds): Network-inserted spots with concentrated marketing
-  language but no promo codes or URLs. These sound like polished radio commercials -- a brand
-  name, tagline, product pitch, and brand repeat. They are NOT host reads and feel tonally
-  distinct from surrounding content. Flag these even without traditional ad markers.
-- Quick mid-roll mentions with URLs or promo codes
-- Post-signoff promotional content after the episode's natural ending
+The transcript is presented in one of two formats:
+- Timestamped: Each cue contains its start and end time offset, in seconds, e.g. `[12.3s - 14.5s] Text`.
+- Indexed: Each cue contains its zero-based index, e.g. `[123] Text`.
 
-WHAT IS NOT AN AD:
-- A guest discussing their own work, book, or project in the context of the interview
-- The host organically mentioning their own other shows, social media, or Patreon during conversation
-- Genuine topic discussion that happens to mention a brand name in passing
-- Episode content that sounds slightly awkward due to surrounding ad removal
-- Silence, pauses, or dead air -- these are normal, not missed ads
-- Content gaps or topic transitions between segments
-- Audio artifacts from the first pass ad removal (slight volume changes near cut points are expected)
+SEGMENTATION RULES:
+- Build a continuous chain of segments from the first cue to the last. No gaps. No overlap.
+- Cues are atomic -- do not split them.
+- Group consecutive cues into the largest coherent block.
+- Split segments immediately when the purpose or topic changes.
+- Absorb ad bumpers and in/out cues into the segments they bound.
+- Ad disclaimers, which often do not transcribe well, always belong in the preceding ad segment.
 
-PLATFORM-INSERTED ADS (these ARE ads -- flag them if still present):
-- Hosting platform pre/post-rolls: "Acast powers the world's best podcasts", "Hosted on Acast",
-  "Spotify for Podcasters", "iHeart Radio", etc. These are promotional insertions, not show content.
-- Cross-promotions for other podcasts: Produced segments promoting a different show (different host,
-  different topic) inserted by the platform or network. These are ads even without promo codes.
-- Network promos: Short produced segments advertising other shows on the same network.
-- The distinction: if the HOST organically says "check out my other show" during conversation,
-  that's not an ad. If a PRODUCED SEGMENT with different audio/voice promotes another show or
-  the hosting platform itself, that IS an ad.
+SEGMENT CATEGORIES:
+Every segment must be assigned one of the following categories:
 
-NOTE: A short, polished segment with marketing language for a brand IS still an ad even if
-it lacks promo codes or URLs. The distinction is: editorial content discusses a brand in
-context of a story; a tagline ad is pure promotional copy with no informational value.
+- `intro`: theme, welcome
+- `teaser`: previews of upcoming content
+- `recap`: "previously on…"
+- `main_content`: cold open, narrative, interview, Q&A. The episode's raison d'être.
+- `sponsor`: ads or promotions unrelated to the podcast or its network.
+- `cross_promo`: promos for sister podcasts or podcast network (Acast, Spotify)
+- `self_promo`: host's Patreon, merch, tours
+- `interaction`: calls to action (like, review, comment)
+- `transition`: musical or narrative interludes
+- `outro`: sign-off, credits, theme
 
-CRITICAL: Every ad you flag must contain identifiable promotional language in the transcript -- a sponsor name, URL, promo code, product pitch, or call to action. If the transcript text in a region is just normal conversation, silence, or a topic change, it is NOT an ad regardless of any audio signal changes.
+FALSE POSITIVE PREVENTION GUIDELINES:
+- Organic brand mentions, product discussions, or news coverage stay in `main_content` unless explicit and prolonged ad language is used.
+- Guest plugs stay in main content.
+- Passing host mentions of URLs or social handles stay in main content unless sustained and directed at the audience.
+- When unsure if a segment qualifies as main content or not, default to main content.
 
-AUDIO CUE SIGNALS: when the prompt lists a labelled audio cue inside an ad window, treat it as a strong boundary marker for that side of the break; the detailed handling (multi-cue breaks, where to start and end the span) is supplied alongside the cue in the audio signals. The cue is never an ad on its own.
+MULTI-SEGMENT CUES:
+Cues are atomic but they may occasionally contain content from two distinct segments. When this occurs and the segments have the same category (e.g. `sponsor`), then simply merge them into a single segment (include both sponsor names if applicable). Otherwise, assign the cue to the segment that best represents its primary content, favoring a main content segment when applicable.
+For example, ad bumpers and in/out cues often appear in main content cues. While we prefer to put these in the segment they bound (usually an ad), in this case you should just treat the cue as main content (always favor main content).
 
-HOW TO IDENTIFY FRAGMENTS:
-A fragment is promotional language that appears abruptly at the start or end of a content section. In the processed audio, the flow should be: natural conversation → transition tone → natural conversation. If instead you see: natural conversation → transition tone → "...dot com slash podcast. Anyway, back to..." → natural conversation, that trailing "dot com slash podcast" is a fragment from an incompletely removed ad.
+ORPHANED FRAGMENTS:
+Orphaned fragments (partial segments leftover from the pass-one cut) may be difficult to categorize accurately. Do your best and know that true orphaned fragments will be merged into their parent segment, making the categorization of these fragments less critical.
 
-AD BOUNDARY RULES:
-- AD START: First promotional word or transition phrase
-- AD END: Where clean episode content resumes (after the last URL, promo code, or call to action)
-- For fragments: mark the ENTIRE fragment including any surrounding promotional context
-- MERGING: Multiple fragments or ads with gaps < 15 seconds = ONE segment
-
-WINDOW CONTEXT:
-This transcript may be a segment of a longer episode.
-- If an ad appears to START before this segment, mark start as the first timestamp
-- If an ad appears to CONTINUE past this segment, mark end as the last timestamp
-- Note partial ads in the reason field
-
-TIMESTAMP PRECISION:
-Use the exact START timestamp from the [Xs] marker of the first ad segment.
-Use the exact END timestamp from the [Xs] marker of the last ad segment.
-Do not interpolate or estimate times between segments.
-
-BE ACCURATE: Don't invent ads. Many episodes will be completely clean after the first pass. An empty result [] is expected and valid for well-processed episodes.
+{sponsor_database}
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON array. No explanation, no markdown.
+Return exactly one JSON object that conforms to the following schema.
 
-Each ad segment: {{"start": FLOAT_SECONDS, "end": FLOAT_SECONDS, "confidence": FLOAT_0_TO_1, "category": "sponsor|cross_promo|self_promo|interaction|intro|outro|recap", "reason": "brief description", "end_text": "last 3-5 words"}}
+Response shape:
+{
+  "segments": [ segment1, segment2, … ]
+}
 
-"category" is REQUIRED on every object, the same as in the first pass. Use:
-- sponsor: a paid host read, a produced ad spot, a dynamically inserted ad (DAI), or a platform-inserted ad
-- cross_promo: a produced segment promoting a different show
-- self_promo: the show promoting its own other content (another show, Patreon, merch, mailing list)
-- interaction: asking listeners to subscribe, rate, review, or follow the show
-- intro: the show's own opening billboard or theme
-- outro: the show's own sign-off, credits, or closing theme
-- recap: a summary of earlier content in the same episode
-An orphaned fragment left by a cut takes the category of the ad it belonged to.
+Segment shape:
+{
+  "start": number,
+  "end": number,
+  "category": enum,
+  "confidence": enum,
+  "reason": string or null,
+  "sponsor_name": string or null,
+  "end_text": string or null
+}
 
-ALL values for "start", "end", and "confidence" MUST be numeric (float). Never use strings like "high", "low", "medium", or percentages like "95%". Examples: "start": 45.0, "end": 82.0, "confidence": 0.95
+Field rules:
+- `segments`: An ordered array of detected segments.
+- `start`: The index of the first cue in the segment.
+- `end`: The index of the last cue in the segment.
+- `category`: The segment category as defined above.
+- `confidence`: Indicates your confidence that start, end, and category are accurate:
+  - `high`: very confident; boundaries are clean and solid evidence for category.
+  - `medium`: reasonably confident.
+  - `low`: uncertain; boundaries are fuzzy or category assignment is weak.
+- `reason`: A *short* explanation for why the segment was categorized as such.
+- `sponsor_name`: The named sponsor (advertiser/brand/company) or product in a promotional segment, null otherwise.
+- `end_text`: The exact final 3-5 words of a promotional segment, null otherwise. Include punctuation in the text.
 
-FRAGMENT EXAMPLE:
-[120.0s - 122.0s] So yeah, that's really interesting.
-[122.5s - 124.0s] [transition tone]
-[124.5s - 128.0s] at athleticgreens.com slash podcast. Anyway, moving on to
-[128.5s - 132.0s] the next topic I wanted to discuss was the new research.
+Note: main_content segments must use null for `reason`, `sponsor_name`, and `end_text` unless instructed otherwise.
 
-Output: [{{"start": 124.5, "end": 128.0, "confidence": 0.95, "category": "sponsor", "reason": "Athletic Greens ad fragment -- orphaned URL after cut boundary", "end_text": "moving on to"}}]
+<!--
+EXAMPLE: Partial transcript (with timestamps) and response:
+[45.0s - 48.0s] That's a great point. Let's take a quick break.
+[48.5s - 52.0s] This episode is brought to you by Athletic Greens.
+[52.5s - 78.0s] AG1 is the daily foundational nutrition supplement… Go to athleticgreens.com/podcast.
+[78.5s - 82.0s] That's athleticgreens.com/podcast.
+[82.5s - 86.0s] Now, back to our conversation.
+…
+[512.0s - 514.5s] Before we get back to it, a quick note.
+[514.5s - 528.0s] Hey, it's Jamie from Tech Weekly. If you like this show, check out our other podcast Startup Stories for interviews with founders every Tuesday.
+[528.0s - 531.0s] Now, back to today's episode.
 
-MISSED AD EXAMPLE:
-[340.0s - 342.0s] You know what I've been really into lately?
-[342.5s - 348.0s] I've been using this app called Calm and it's been amazing for my sleep.
-[348.5s - 365.0s] They have these sleep stories and meditations... You can try it free for 30 days at calm.com/podcast.
-[365.5s - 368.0s] But anyway, getting back to what we were saying about
+RESPONSE: 
+{ "segments": [
+  {"start": 45.0, "end": 82.0, "confidence": 0.98, "category": "sponsor", "reason": "Athletic Greens sponsor read", "sponsor_name": "Athletic Greens", "end_text": "athleticgreens.com/podcast"},
+  {"start": 512.0, "end": 531.0, "confidence": 0.85, "category": "cross_promo", "reason": "Cross-promotion for sister podcast", "sponsor_name": "Startup Stories podcast", "end_text": "back to today's episode."}
+]}
+-->
 
-Output: [{{"start": 340.0, "end": 365.0, "confidence": 0.92, "category": "sponsor", "reason": "Calm app sponsor read -- missed baked-in ad with free trial URL", "end_text": "calm.com/podcast"}}]
-
-CLEAN EPISODE EXAMPLE:
-[no promotional content found in transcript]
-
-Output: []{sponsor_database}"""
+REMINDERS:
+- Output JSON only. No Markdown, code fences, or explanatory text. Only JSON.
+- Use exactly the specified field names, and only those fields.
+- Ensure the result is valid, parseable JSON.
+"""
 
 
 # Both reviewer prompts use placeholder substitution via _render_prompt;
