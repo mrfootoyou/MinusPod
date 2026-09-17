@@ -748,11 +748,13 @@ SPONSOR_ALIAS_FIELD_DESCRIPTION = (
 
 AD_DETECTION_JSON_SCHEMA = {
     "type": "object",
+    "name": "Ad Detection",
     "properties": {
-        "ads": {
+        "segments": {
             "type": "array",
             "items": {
                 "type": "object",
+                "description": "A cohesive segment within a transcript",
                 "properties": {
                     "start": {
                         "type": "number",
@@ -762,12 +764,6 @@ AD_DETECTION_JSON_SCHEMA = {
                         "type": "number",
                         # documented in the system prompt
                     },
-                    "end_text": {
-                        "type": "string",
-                        "description": (
-                            "The exact last 3-5 words of the segment"
-                        ),
-                    },
                     "category": {
                         "type": "string",
                         "enum": list(SEGMENT_CATEGORIES),
@@ -775,32 +771,30 @@ AD_DETECTION_JSON_SCHEMA = {
                     },
                     "confidence": {
                         "type": "number",
-                        "description": (
-                            "Confidence of the category assignment, from 0 to 1"
-                        ),
+                        # documented in the system prompt
                     },
                     "reason": {
                         "type": ["string", "null"],
-                        "description": "Brief 1 sentence description",
+                        # documented in the system prompt
                     },
                     "sponsor": {
                         "type": ["string", "null"],
-                        "description": (
-                            "The sponsor (advertiser/brand/company) or product named "
-                            "in a `sponsor` segment (prefer sponsor name when known). "
-                            "`null` for other segments"
-                        )
+                        # documented in the system prompt
+                    },
+                    "end_text": {
+                        "type": "string",
+                        # documented in the system prompt
                     },
                 },
                 "required": [
-                        "start", "end", "end_text", "category", "confidence",
-                        "reason", "sponsor",
+                        "start", "end", "category", "confidence",
+                        "reason", "sponsor", "end_text",
                     ],
                 "additionalProperties": False
             },
         },
     },
-    "required": ["ads"],
+    "required": ["segments"],
     "additionalProperties": False
 }
 
