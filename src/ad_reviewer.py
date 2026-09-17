@@ -1661,8 +1661,8 @@ class AdReviewer:
 
         podcast_name = episode_meta.get("podcast_name", "Unknown")
         episode_title = episode_meta.get("episode_title", "Unknown")
-        episode_description = scrub_description(episode_meta.get("episode_description", ""), max_length=4000)
-        podcast_description = scrub_description(episode_meta.get("podcast_description", ""), max_length=800)
+        episode_description = scrub_description(episode_meta.get("episode_description"), max_length=1000)
+        podcast_description = scrub_description(episode_meta.get("podcast_description"), max_length=200)
 
         if self._sponsor_history_provider:
             try:
