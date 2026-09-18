@@ -11,12 +11,19 @@ release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- On a phone, the LLM spend From and To date inputs no longer overrun the card. They now size to the date they hold and sit together on one line instead of stretching full width, which the native date control could push past the card edge.
+
+## [2.97.7] - 2026-09-18
+
 ### Security
 
 - anyio 4.13.0 to 4.14.2 to clear CVE-2026-63374 and CVE-2026-64847 (pulled in by anthropic, httpx, and openai).
 
 ### Fixed
 
+- Editing an LLM provider's endpoint or type no longer crashes the Settings page. The pre-save preflight read the affected-runs count and list off the top of the response, but the API nests them under `affectedRuns`, so the count read as undefined, the empty-state guard was skipped, and the list render called `.map` on undefined. The client now unwraps the nested object.
 - On the LLM spend section, the From and To date inputs no longer overrun the card on a phone, and a long provider/model name no longer collides with its price. The model name gets its own line and the price sits below it.
 
 ## [2.97.6] - 2026-09-17
