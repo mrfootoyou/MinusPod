@@ -291,6 +291,11 @@ A row of section links sits under the Stats heading and jumps straight to Overvi
 |---------|--------|
 | <img src="screenshots/patterns-desktop.png" width="500"> | <img src="screenshots/patterns-mobile.png" width="200"> |
 
+#### Sponsors
+| Desktop | Mobile |
+|---------|--------|
+| <img src="screenshots/sponsors-desktop.png" width="500"> | <img src="screenshots/sponsors-mobile.png" width="200"> |
+
 #### History
 | Desktop | Mobile |
 |---------|--------|
@@ -305,10 +310,6 @@ A row of section links sits under the Stats heading and jumps straight to Overvi
 | Desktop | Mobile |
 |---------|--------|
 | <img src="screenshots/settings-desktop.png" width="500"> | <img src="screenshots/settings-mobile.png" width="200"> |
-
-#### API Documentation
-
-<img src="screenshots/api-docs.png" width="600">
 
 ---
 
