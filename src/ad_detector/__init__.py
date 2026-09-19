@@ -7,6 +7,7 @@ Package layout:
   external callers (production and tests) imported from the pre-split module
 """
 import logging
+import json
 import random
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,6 +32,7 @@ from utils.language import get_pattern_language
 from utils.llm_call import (
     LOSS_CONNECTIVITY, LOSS_SERVER_ERROR, _wait_past_breaker_cooldown,
     call_llm, call_llm_for_window, schema_format_for, window_loss_class,
+    should_include_json_schema_in_prompt
 )
 from utils.markers import (
     DAI_CORE_SPANS,
@@ -845,7 +847,7 @@ class AdDetector:
         try:
             override = strip_comments_from_prompt(self.db.get_setting(setting_key))
         except Exception:
-            override = None
+            override = ""
         return apply_override(rendered, override)
 
     def get_system_prompt(self) -> str:
@@ -981,21 +983,20 @@ class AdDetector:
         return [f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}"
                 for seg in window_segments]
 
-    def _build_detection_system_prompt(self, slug: str, addressing_mode: str = 'timestamps') -> str:
-        """Compose the system prompt for detection window calls.
-
-        Appends SHOW_SEGMENTS_PROMPT_SECTION to get_system_prompt() when the
-        podcast opted in, after override resolution, so a customized
-        system_prompt still gets the show-segments instructions. Appends
-        SEGMENT_ID_SYSTEM_SECTION when ``addressing_mode`` is 'segment_ids'
-        (issue: hushpod adoption), after the show-segments section so both
-        can layer independently.
-        """
-        prompt = self.get_system_prompt()
-        if self._podcast_wants_show_segments(slug):
-            prompt = f"{prompt}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
-        if addressing_mode == 'segment_ids':
-            prompt = f"{prompt}{SEGMENT_ID_SYSTEM_SECTION}"
+    def _add_schema_to_prompt(self, prompt: str, model: str,
+                              schema: dict = AD_DETECTION_JSON_SCHEMA) -> str:
+        if should_include_json_schema_in_prompt(model):
+            # Putting it at the beginning of the system prompt simulates what
+            # OpenAI and Google do, although the exact manner and wording is
+            # unknown.
+            response_schema = (
+                "---\n"
+                "response_format: json_schema\n"
+                f"response_schema: {json.dumps(schema)}\n"
+                "---\n"
+                "\n"
+            )
+            return response_schema + prompt
         return prompt
 
     _HINT_TIER1_CAP = 12
@@ -1833,8 +1834,14 @@ class AdDetector:
                        f"for {total_duration/60:.1f}min episode")
 
             # Get prompts and model
-            system_prompt = self._build_detection_system_prompt(slug, addressing_mode)
+            system_prompt = self.get_system_prompt()
             model = self.get_model()
+            show_segments_enabled = self._podcast_wants_show_segments(slug)
+            if show_segments_enabled:
+                system_prompt += strip_comments_from_prompt(SHOW_SEGMENTS_PROMPT_SECTION)
+            if addressing_mode == 'segment_ids':
+                system_prompt += strip_comments_from_prompt(SEGMENT_ID_SYSTEM_SECTION)
+            system_prompt = self._add_schema_to_prompt(system_prompt, model)
 
             logger.info(f"[{slug}:{episode_id}] Using model: {model}")
             log_assembled_system_prompt(slug, episode_id, system_prompt)
@@ -1870,9 +1877,6 @@ class AdDetector:
 
             # Gates the category repair pass and the category-miss warning on
             # whether per-category actions are configured for this feed.
-            # Checks system_prompt for SHOW_SEGMENTS_PROMPT_SECTION instead of
-            # a second DB call: _build_detection_system_prompt already made it.
-            show_segments_enabled = SHOW_SEGMENTS_PROMPT_SECTION in system_prompt
             segment_categories_configured = show_segments_enabled or (
                 action_map is not None
                 and any(action != DEFAULT_SEGMENT_ACTION
@@ -3254,14 +3258,15 @@ class AdDetector:
             logger.info(f"[{slug}:{episode_id}] Verification: Processing {len(windows)} windows "
                        f"for {total_duration/60:.1f}min processed audio")
 
-            system_prompt = self.get_verification_prompt()
-            log_assembled_system_prompt(slug, episode_id, system_prompt,
-                                        label="Verification system")
-            if addressing_mode == 'segment_ids':
-                system_prompt = f"{system_prompt}{SEGMENT_ID_SYSTEM_SECTION}"
             model = self.get_verification_model()
+            system_prompt = self.get_verification_prompt()
+            if addressing_mode == 'segment_ids':
+                system_prompt += strip_comments_from_prompt(SEGMENT_ID_SYSTEM_SECTION)
+            system_prompt = self._add_schema_to_prompt(system_prompt, model)
 
             logger.info(f"[{slug}:{episode_id}] Verification using model: {model}")
+            log_assembled_system_prompt(slug, episode_id, system_prompt,
+                                        label="Verification system")
 
             # Prepare description section
             description_section = ""
