@@ -12,7 +12,7 @@ info:
     - Monitor system status and trigger cleanup operations
     - Manage cross-episode ad patterns with network and podcast scope
     - Submit corrections to improve ad detection accuracy
-  version: 2.97.7
+  version: 2.97.10
   contact:
     name: MinusPod
   license:
@@ -736,7 +736,7 @@ paths:
                     - generate
                     - 'off'
                     - null
-                  description: Per-feed chapters mode. 'auto' preserves publisher-embedded chapters when enough survive the cut, otherwise generates them; 'generate' always generates new chapters; 'off' skips the chapter step entirely; null resets to the default 'auto' behavior.
+                  description: Per-feed chapters mode. 'auto' preserves publisher-embedded chapters when enough survive the cut, otherwise generates them; 'generate' always generates new chapters; 'off' skips the chapter step entirely; null follows the global chaptersMode setting.
                 chaptersInNotes:
                   type:
                     - string
@@ -925,7 +925,7 @@ paths:
                   type:
                     - boolean
                     - 'null'
-                  description: Per-feed cross-fetch differential setting. When on, each episode is fetched a second time with a different podcast-client User-Agent and the two files are diffed to find dynamically inserted audio. Null means auto, which runs the stage on feeds that look DAI-served; false always disables it.
+                  description: Legacy per-feed cross-fetch flag. Use differentialFetchMode for new clients; null selects automatic DAI detection.
                 processingMode:
                   type: string
                   enum:
@@ -1003,7 +1003,18 @@ paths:
                   type:
                     - boolean
                     - 'null'
-                  description: When true, the pass-2 verification scan of the cut audio is skipped, which roughly halves the ad-detection LLM spend on feeds whose first pass is already reliable. Held differential detections that pass 2 would have confirmed then wait for a human. Null and false both mean the second pass runs.
+                  description: When true, the pass-2 verification scan of the cut audio is skipped. Null follows the global skipSecondPass setting.
+                differentialFetchMode:
+                  type:
+                    - string
+                    - 'null'
+                  enum:
+                    - inherit
+                    - auto
+                    - 'on'
+                    - 'off'
+                    - null
+                  description: Per-feed cross-fetch mode. 'inherit' follows the global default, 'auto' follows DAI detection, and 'on' or 'off' forces the stage.
                 ownEpisodeGuids:
                   type:
                     - boolean
@@ -2669,13 +2680,10 @@ paths:
         - Processing
       summary: List processing and queued episodes
       description: >-
-        Returns the episodes currently processing across all feeds, followed by
-        the pending queue in dequeue order (priority first, then age). Queued
-        entries carry stage=queued, a 1-based offset-aware queuePosition, and
-        an `admission` object explaining why they are or are not starting.
-        The waiting list is paginated:
-        offset/limit page over the DB-backed rows, with display-only entries
-        trailing after them.
+        Returns active jobs, then waiting jobs in dequeue order. offset and
+        limit page the waiting list. Queued rows include queuePosition and
+        admission. queueTotal is the full waiting count and excludes active
+        jobs.
       operationId: listProcessingEpisodes
       parameters:
         - name: offset
@@ -5677,6 +5685,17 @@ paths:
                   type: boolean
                   description: Generate podcast:chapters JSON for each processed episode.
                   example: true
+                chaptersMode:
+                  type: string
+                  enum: ['auto', 'generate', 'off']
+                  description: Default chapter mode for feeds that inherit this setting.
+                skipSecondPass:
+                  type: boolean
+                  description: When true, feeds that inherit this setting skip the pass-2 verification scan.
+                differentialFetchMode:
+                  type: string
+                  enum: ['auto', 'on', 'off']
+                  description: Default cross-fetch mode for feeds that inherit this setting.
                 chaptersInNotes:
                   type: boolean
                   description: Append the generated chapter list to served episode descriptions and the episode API description. Feeds can override per feed.
@@ -6392,6 +6411,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/SystemStatus'
 
+  /system/podping/check:
+    post:
+      tags:
+        - System
+      summary: Check every Podping RPC node
+      description: >-
+        Requests one leader-owned check of every configured node. The check
+        validates the head and a block response without changing the active
+        listener node. An unfinished request is reused. Follow progress through
+        podping.check in GET /system/status. This action also works while the
+        Podping listener is disabled.
+      operationId: checkPodpingNodes
+      responses:
+        '202':
+          description: Check accepted or already in progress
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PodpingNodeCheck'
+                  - type: object
+                    properties:
+                      accepted:
+                        type: boolean
+                        description: True when this request created the check.
+        '401':
+          description: Authentication required
+        '403':
+          description: CSRF validation failed
+        '503':
+          description: The background monitor is unavailable
+
   /system/database/checkpoint:
     post:
       tags:
@@ -6927,8 +6978,19 @@ paths:
         - System
       summary: Download database backup
       description: |
-        Returns a copy of the SQLite database file for backup purposes. Rate limited to 6/hour.
+        Downloads encrypted SQLite by default. A missing master passphrase
+        returns 409, never plaintext. `encrypted=false` requests
+        plaintext; treat the file as sensitive. Limited to 6/hour.
       operationId: downloadBackup
+      parameters:
+        - in: query
+          name: encrypted
+          schema:
+            type: boolean
+            default: true
+          description: >-
+            true encrypts without fallback. false explicitly requests a
+            plaintext database file.
       responses:
         '200':
           description: Database backup file download
@@ -6936,12 +6998,26 @@ paths:
             Content-Disposition:
               schema:
                 type: string
-              description: 'Attachment filename, e.g. attachment; filename="minuspod-backup-2026-03-12.db"'
+              description: 'Attachment filename ending in .db.enc when encrypted or .db for an explicit plaintext export.'
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
+        '409':
+          description: Encrypted export unavailable because no master passphrase is configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: backup_encryption_unavailable
+        '500':
+          description: Backup creation or encryption failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           description: Rate limit exceeded
           content:
@@ -8563,10 +8639,21 @@ paths:
                       type: object
                       properties:
                         node:                { type: string, example: https://api.hive.blog }
+                        selected:            { type: boolean, description: Last node to complete a successful RPC call. }
                         consecutiveFailures: { type: integer }
-                        lastSuccessAt:       { type: [string, 'null'], format: date-time }
+                        lastSuccessAt:
+                          type: [string, 'null']
+                          format: date-time
+                          description: Last successful RPC response, shown as Last seen; null before success.
                         nextRetryAt:         { type: [string, 'null'], format: date-time }
                         lastFailureReason:   { type: [string, 'null'] }
+                        httpStatus:
+                          type: [integer, 'null']
+                          description: Latest HTTP status, including 200 with invalid_response; null if none arrived.
+                        outcome:
+                          type: [string, 'null']
+                          enum: [healthy, http_error, invalid_response, unreachable, null]
+                          description: Latest RPC outcome; null before the first check.
 
   /feeds/{slug}/tags:
     get:
@@ -10960,7 +11047,15 @@ components:
             - generate
             - 'off'
             - null
-          description: Per-feed chapters mode. 'auto' preserves publisher-embedded chapters when enough survive the cut, otherwise generates them; 'generate' always generates new chapters; 'off' skips the chapter step entirely; null means not set, which resolves to 'auto'.
+          description: Per-feed chapters mode. 'auto' preserves publisher-embedded chapters when enough survive the cut, otherwise generates them; 'generate' always generates new chapters; 'off' skips the chapter step entirely; null follows the global chaptersMode setting.
+        differentialFetchMode:
+          type: string
+          enum:
+            - inherit
+            - auto
+            - 'on'
+            - 'off'
+          description: Configured per-feed cross-fetch mode. 'inherit' follows the global default; other values select auto, on, or off.
         chaptersInNotes:
           type:
             - string
@@ -11141,13 +11236,13 @@ components:
           type:
             - boolean
             - 'null'
-          description: Per-feed opt-in for the cross-fetch differential. null and false both read as off.
+          description: Legacy per-feed cross-fetch flag. Use differentialFetchMode for new clients; null selects automatic DAI detection.
         daiLikely:
           type: boolean
           description: Hint that this feed likely uses dynamic ad insertion, based on recent enclosure URLs matching known DAI or prefix domains. Returned on the feed detail response.
         differentialFetchEffective:
           type: boolean
-          description: Whether the cross-fetch differential stage will run for this feed, resolved from the per-feed flag (null means auto) plus the DAI signals. Feed detail only.
+          description: Whether the cross-fetch differential stage will run for this feed, resolved from the per-feed mode, global default, and DAI signals. Feed detail only.
         websiteUrl:
           type:
             - string
@@ -11225,7 +11320,7 @@ components:
           type:
             - boolean
             - 'null'
-          description: Whether the pass-2 verification scan of the cut audio is skipped for this feed, which roughly halves the ad-detection LLM spend on feeds whose first pass is already reliable. Held differential detections that pass 2 would have confirmed then wait for a human. Null and false both mean the second pass runs.
+          description: Whether the pass-2 verification scan of the cut audio is skipped for this feed. Null follows the global skipSecondPass setting.
         latestEpisodes:
           type: array
           items:
@@ -11925,6 +12020,7 @@ components:
           type:
             - number
             - 'null'
+          description: Total run wall-clock seconds; null when no duration was recorded.
         errorMessage:
           type:
             - string
@@ -12054,6 +12150,68 @@ components:
               description: Ads the second scan of the output audio found and cut. 0 means the scan ran and came back clean. Absent or null means the scan did not run, either because it was skipped (see verificationSkipped and detectionSkipped) or because it failed.
             secondsRemoved:
               type: number
+            timings:
+              type:
+                - object
+                - 'null'
+              description: >-
+                Wall-clock seconds by stage. Concurrent stages and
+                FFmpeg can overlap, so fields do not sum to
+                processingDurationSeconds. ffmpegSeconds includes every
+                FFmpeg task and retry. finalizeSeconds stops before history
+                persistence and notifications. Null means no measurement was
+                recorded for the object or field.
+              properties:
+                downloadSeconds:
+                  type:
+                    - number
+                    - 'null'
+                transcriptionSeconds:
+                  type:
+                    - number
+                    - 'null'
+                differentialSeconds:
+                  type:
+                    - number
+                    - 'null'
+                audioAnalysisSeconds:
+                  type:
+                    - number
+                    - 'null'
+                detectionSeconds:
+                  type:
+                    - number
+                    - 'null'
+                refineValidateSeconds:
+                  type:
+                    - number
+                    - 'null'
+                cutSeconds:
+                  type:
+                    - number
+                    - 'null'
+                verificationSeconds:
+                  type:
+                    - number
+                    - 'null'
+                normalizationSeconds:
+                  type:
+                    - number
+                    - 'null'
+                assetsSeconds:
+                  type:
+                    - number
+                    - 'null'
+                finalizeSeconds:
+                  type:
+                    - number
+                    - 'null'
+                  description: Finalization work before history persistence and notifications.
+                ffmpegSeconds:
+                  type:
+                    - number
+                    - 'null'
+                  description: Wall-clock seconds across FFmpeg tasks and retries; zero means none were observed.
             transcription:
               type: object
               description: >-
@@ -13454,6 +13612,32 @@ components:
               type: boolean
             isDefault:
               type: boolean
+        chaptersMode:
+          type: object
+          description: Default chapter mode for feeds that inherit the global setting.
+          properties:
+            value:
+              type: string
+              enum: ['auto', 'generate', 'off']
+            isDefault:
+              type: boolean
+        skipSecondPass:
+          type: object
+          description: Skip the pass-2 verification scan by default for feeds that inherit this setting.
+          properties:
+            value:
+              type: boolean
+            isDefault:
+              type: boolean
+        differentialFetchMode:
+          type: object
+          description: Default cross-fetch mode for feeds that inherit the global setting.
+          properties:
+            value:
+              type: string
+              enum: ['auto', 'on', 'off']
+            isDefault:
+              type: boolean
         chaptersInNotes:
           type: object
           description: Append the generated chapter list to served episode descriptions and the episode API description.
@@ -14020,6 +14204,9 @@ components:
             Podping listener health. Informational only, the same as
             feedRefresh: scheduled RSS polling remains the fallback, so an
             outage here delays notifications rather than stopping discovery.
+            While the listener is enabled, every configured node is checked at
+            startup and every five minutes. Manual checks also work while it is
+            disabled and do not change the active listener node.
             GET /podping/hosts reports the same node data for the Podping
             page.
           properties:
@@ -14029,12 +14216,15 @@ components:
               type: boolean
               description: >-
                 True only while every configured Hive RPC node is
-                unavailable. Any single node succeeding clears it.
+                unavailable to the enabled live listener. Any live listener
+                success clears it; a manual check does not change this field.
             degradedSince:
               type:
                 - string
                 - 'null'
               format: date-time
+            check:
+              $ref: '#/components/schemas/PodpingNodeCheck'
             nodes:
               type: array
               description: One entry per configured node, in the configured order.
@@ -14043,6 +14233,12 @@ components:
                 properties:
                   node:
                     type: string
+                  selected:
+                    type: boolean
+                    description: Historical last node to complete a successful RPC call.
+                  active:
+                    type: boolean
+                    description: True while this node has the live listener connection.
                   consecutiveFailures:
                     type: integer
                     description: Failure streak, which survives a restart rather than resetting.
@@ -14051,6 +14247,7 @@ components:
                       - string
                       - 'null'
                     format: date-time
+                    description: Last successful RPC response, shown as Last seen; null before success.
                   nextRetryAt:
                     type:
                       - string
@@ -14060,6 +14257,17 @@ components:
                     type:
                       - string
                       - 'null'
+                  httpStatus:
+                    type:
+                      - integer
+                      - 'null'
+                    description: Latest HTTP status, including 200 with invalid_response; null if none arrived.
+                  outcome:
+                    type:
+                      - string
+                      - 'null'
+                    enum: [healthy, http_error, invalid_response, unreachable, null]
+                    description: Latest RPC outcome; null before the first check.
         transcriber:
           type: object
           description: >-
@@ -14109,6 +14317,52 @@ components:
             plaintextSecretsCount:
               type: integer
 
+    PodpingNodeCheck:
+      type: object
+      required:
+        - checkId
+        - status
+        - requestedAt
+        - startedAt
+        - completedAt
+      properties:
+        checkId:
+          type:
+            - string
+            - 'null'
+        status:
+          type: string
+          enum: [idle, pending, running, completed, error]
+        requestedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        startedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        healthyNodes:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        totalNodes:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        message:
+          type:
+            - string
+            - 'null'
+
     ReleaseInfo:
       type: object
       properties:
@@ -14126,6 +14380,7 @@ components:
 
     ProcessingEpisode:
       type: object
+      required: [episodeId, slug, title, podcast, startedAt, stage, queueTotal]
       properties:
         episodeId:
           type: string
@@ -14150,8 +14405,8 @@ components:
             - string
             - 'null'
           description: >-
-            Current pipeline stage for the active job, or "queued" for an
-            episode still waiting its turn
+            Active pipeline label, "queued" for a waiting episode, or null
+            when live stage detail is unavailable.
         queuedAt:
           type:
             - string
@@ -14164,9 +14419,7 @@ components:
         queueTotal:
           type: integer
           description: >-
-            Total pending episodes across the whole backlog, not just the
-            requested page. Stamped on every entry, active ones included, so
-            a page whose queued rows all deduped away still reports it.
+            Full waiting count across all pages, excluding active jobs.
         priority:
           type:
             - integer

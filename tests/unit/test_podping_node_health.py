@@ -1,6 +1,7 @@
 """Tests for durable per-node Podping health and the all-nodes-down signal."""
 import json
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import requests
 
@@ -14,6 +15,7 @@ from podping_listener import (
     PODPING_NODES,
     DEGRADED_SETTING,
     NODE_HEALTH_SETTING,
+    SELECTED_NODE_SETTING,
     NODE_SUCCESS_PERSIST_SECONDS,
     get_node_health_summary,
 )
@@ -88,22 +90,20 @@ class TestOneNodeFailure:
         assert db.settings.get(DEGRADED_SETTING) != '1'
 
 
-class TestTwoNodeFailure:
-    def test_two_of_three_nodes_down_does_not_set_degraded(self):
+class TestPartialNodeFailure:
+    def test_all_but_one_node_down_does_not_set_degraded(self):
         db = FakeDb()
         listener = PodpingListener(
             rpc=lambda *a, **k: (_ for _ in ()).throw(
                 requests.RequestException('boom')),
             db=db, sleep=lambda s: None, rand=lambda lo, hi: 0)
 
-        assert len(PODPING_NODES) == 3, 'test assumes the default 3-node list'
-        listener._call_rpc('some_method', [])
-        listener._call_rpc('some_method', [])
+        for _ in range(len(PODPING_NODES) - 1):
+            listener._call_rpc('some_method', [])
 
         assert db.settings.get(DEGRADED_SETTING) != '1'
-        # Each failed node has its own recorded streak.
-        assert _health(db, PODPING_NODES[0])['consecutive_failures'] == 1
-        assert _health(db, PODPING_NODES[1])['consecutive_failures'] == 1
+        for node in PODPING_NODES[:-1]:
+            assert _health(db, node)['consecutive_failures'] == 1
 
 
 class TestAllNodesFailure:
@@ -260,6 +260,56 @@ class TestNodeHealthSummary:
         failing = next(row for row in summary if row['node'] == PODPING_NODES[0])
         assert failing['consecutiveFailures'] == 1
         assert failing['lastFailureReason']
+        assert failing['httpStatus'] is None
+        assert failing['outcome'] == 'unreachable'
+
+    def test_default_rpc_records_actual_http_status(self):
+        db = FakeDb()
+        response = MagicMock(status_code=200)
+        response.json.return_value = {'result': {'ok': True}}
+        with patch('podping_listener.requests.post', return_value=response):
+            listener = PodpingListener(db=db, sleep=lambda s: None)
+            listener._call_rpc('some_method', [])
+
+        summary = get_node_health_summary(db)[0]
+        assert summary['httpStatus'] == 200
+        assert summary['outcome'] == 'healthy'
+
+    def test_non_200_response_records_its_status(self):
+        db = FakeDb()
+        response = MagicMock(status_code=503)
+        with patch('podping_listener.requests.post', return_value=response):
+            listener = PodpingListener(db=db, sleep=lambda s: None,
+                                       rand=lambda lo, hi: 0)
+            listener._call_rpc('some_method', [])
+
+        summary = get_node_health_summary(db)[0]
+        assert summary['httpStatus'] == 503
+        assert summary['outcome'] == 'http_error'
+
+    def test_malformed_200_response_is_not_healthy(self):
+        db = FakeDb()
+        response = MagicMock(status_code=200)
+        response.json.return_value = {'error': 'invalid'}
+        with patch('podping_listener.requests.post', return_value=response):
+            listener = PodpingListener(db=db, sleep=lambda s: None,
+                                       rand=lambda lo, hi: 0)
+            listener._call_rpc('some_method', [])
+
+        summary = get_node_health_summary(db)[0]
+        assert summary['httpStatus'] == 200
+        assert summary['outcome'] == 'invalid_response'
+
+    def test_summary_marks_the_last_successful_node_as_selected(self):
+        db = FakeDb()
+        listener = PodpingListener(
+            rpc=lambda *a, **k: {'ok': True}, db=db, sleep=lambda s: None,
+            rand=lambda lo, hi: 0)
+        listener._call_rpc('some_method', [])
+
+        summary = get_node_health_summary(db)
+        assert summary[0]['selected'] is True
+        assert db.settings[SELECTED_NODE_SETTING] == PODPING_NODES[0]
 
     def test_failure_reason_has_no_query_string(self):
         db = FakeDb()

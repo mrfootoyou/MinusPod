@@ -101,13 +101,15 @@ returns 503 with a JIT-triggered processing job behind it.
 | Tag | Why it is regenerated |
 |---|---|
 | [`podcast:transcript`](https://podcasting2.org/docs/podcast-namespace/tags/transcript) | MinusPod generates a transcript aligned to the processed audio. An upstream transcript would be offset by the length of every removed ad, and would also point subscribers at the publisher's CDN. |
-| [`podcast:chapters`](https://podcasting2.org/docs/podcast-namespace/tags/chapters) | MinusPod always serves its own chapters JSON at its own URL, never the upstream one, because the upstream timestamps point into the original, uncut audio. What that JSON contains depends on the per-feed chapter mode; see "Chapter modes" below. |
+| [`podcast:chapters`](https://podcasting2.org/docs/podcast-namespace/tags/chapters) | MinusPod serves its own chapters JSON because upstream timestamps point into the original, uncut audio. Its contents depend on the effective chapter mode; see "Chapter modes" below. |
 | `itunes:duration` | Recomputed from the processed file's actual length. |
 
 ### Chapter modes
 
-Each feed has a chapter mode, set on its Feed Settings page: **Auto**
-(the default), **Always generate**, or **Off**.
+Settings > Transcripts & Chapters sets the chapter mode: **Auto** (the default),
+**Always generate**, or **Off**. New feeds and feeds set to Inherit use that
+choice; an explicit Feed Settings value overrides it. During normal processing,
+the mode is applied only when Generate Chapters is on.
 
 **Auto** preserves the podcast's own chapters when enough of them survive
 the cut, checking two sources before falling back to generation. The
@@ -233,8 +235,15 @@ No Hive account, keys, or wallet are required. The listener only
 reads the public chain; it never writes to it. Requests go to a small,
 built-in list of public Hive API nodes over outbound HTTPS, roughly
 two requests every 3 seconds while the toggle is on (a head poll plus
-a block fetch each tick), and none while it is off. If a node is
-unreachable, the listener rotates to the next one and backs off.
+a block fetch each tick). If a node is unreachable, the listener
+rotates to the next one and backs off.
+
+Settings > System Health lists each node's endpoint, latest HTTP status,
+and last successful response time. It identifies the node carrying listener
+traffic. While the listener is enabled, MinusPod checks every node at startup
+and every five minutes. **Check now** runs the same check on demand, even when
+the listener is off. These checks do not change the active node. The same
+summary and check progress are available from `GET /api/v1/system/status`.
 
 Podping is an accelerator, not a replacement for polling. The
 scheduled RSS refresh (see [How It Works > Processing

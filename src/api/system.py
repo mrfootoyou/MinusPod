@@ -1,11 +1,13 @@
 """System routes: /health, /system/* endpoints."""
 import datetime
+import json
 import logging
 import os
 import re
 import sqlite3
 import tempfile
 import time
+import uuid
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from config import WHISPER_BACKEND_API, resolve_whisper_device
 from database.settings import registry_default
 from podping_listener import (
     get_node_health_summary, DEGRADED_SETTING, DEGRADED_SINCE_SETTING,
+    get_node_check_status, MONITOR_HEARTBEAT_SETTING, NODE_CHECK_SETTING,
 )
 from pricing_fetcher import force_refresh_pricing
 from secrets_crypto import (
@@ -29,6 +32,7 @@ from secrets_crypto import (
 )
 from db_backup_service import backup_now, BackupInProgressError
 from utils.http import safe_url_for_log
+from utils.time import parse_iso_utc, utc_now, utc_now_iso
 
 logger = logging.getLogger('podcast.api')
 
@@ -193,6 +197,7 @@ def get_system_status():
             'allNodesDown': db.get_setting(DEGRADED_SETTING) == '1',
             'degradedSince': db.get_setting(DEGRADED_SINCE_SETTING) or None,
             'nodes': get_node_health_summary(db),
+            'check': get_node_check_status(db),
         },
         # Informational only, never gates readiness (see /health above): a
         # GPU-OOM exhaustion on the local Whisper backend degrades
@@ -201,6 +206,46 @@ def get_system_status():
         # nothing when transcription runs on a remote API.
         'transcriber': transcriber.get_transcriber_health(),
     })
+
+
+@api.route('/system/podping/check', methods=['POST'])
+@log_request
+def check_podping_nodes():
+    """Request one leader-owned health check of every Podping node."""
+    db = get_database()
+    heartbeat_raw = db.get_setting(MONITOR_HEARTBEAT_SETTING)
+    try:
+        heartbeat_data = json.loads(heartbeat_raw) if heartbeat_raw else {}
+    except (TypeError, ValueError):
+        heartbeat_data = {}
+    heartbeat = parse_iso_utc(
+        heartbeat_data.get('observedAt') if isinstance(heartbeat_data, dict)
+        else None)
+    if (heartbeat is None
+            or (utc_now() - heartbeat).total_seconds() > 45):
+        return error_response('Podping monitor is not available', 503)
+
+    created = False
+
+    def create_or_reuse(raw):
+        nonlocal created
+        try:
+            current = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            current = {}
+        if isinstance(current, dict) and current.get('status') in {'pending', 'running'}:
+            return json.dumps(current)
+        created = True
+        return json.dumps({
+            'checkId': uuid.uuid4().hex,
+            'status': 'pending',
+            'requestedAt': utc_now_iso(),
+            'startedAt': None,
+            'completedAt': None,
+        })
+
+    db.merge_setting(NODE_CHECK_SETTING, create_or_reuse)
+    return json_response({'accepted': created, **get_node_check_status(db)}, 202)
 
 
 @api.route('/system/database/checkpoint', methods=['POST'])
@@ -364,6 +409,15 @@ def backup_database():
     """Create and download a backup of the SQLite database."""
     from flask import after_this_request
 
+    encrypt_requested = request.args.get('encrypted', 'true').lower() != 'false'
+    passphrase = os.environ.get('MINUSPOD_MASTER_PASSPHRASE')
+    if encrypt_requested and not passphrase:
+        logger.warning(
+            "Encrypted database backup refused: encryption is unavailable ip=%s",
+            request.remote_addr,
+        )
+        return error_response('backup_encryption_unavailable', 409)
+
     db = get_database()
     tmp_path = None
     try:
@@ -381,24 +435,20 @@ def backup_database():
         backup_size = os.path.getsize(tmp_path)
         timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 
-        # If MINUSPOD_MASTER_PASSPHRASE is set, encrypt the backup so an
-        # exported copy doesn't leak plaintext provider secrets that
-        # predate the 2.0 crypto migration. Operators can opt out with
-        # ?encrypted=false when they have another protection layer (e.g.
-        # per-download GPG wrap).
-        encrypt_param = request.args.get('encrypted', 'true').lower() != 'false'
-        if encrypt_param and crypto_available():
+        encrypted_on_disk = False
+        if encrypt_requested:
             try:
                 encrypted_path = f'{tmp_path}.enc'
                 try:
                     encrypt_backup_file(
                         tmp_path, encrypted_path,
-                        os.environ['MINUSPOD_MASTER_PASSPHRASE'],
+                        passphrase,
                     )
                     os.replace(encrypted_path, tmp_path)
                 finally:
                     Path(encrypted_path).unlink(missing_ok=True)
                 filename = f"minuspod-backup-{timestamp}.db.enc"
+                encrypted_on_disk = True
                 logger.info(
                     "Database backup encrypted: %s -> %s bytes (AES-GCM)",
                     backup_size, os.path.getsize(tmp_path),
@@ -408,16 +458,14 @@ def backup_database():
                 return error_response('Backup encryption failed', 500)
         else:
             filename = f"minuspod-backup-{timestamp}.db"
-            if encrypt_param and not crypto_available():
-                logger.warning(
-                    "Database backup downloaded UNENCRYPTED: "
-                    "set MINUSPOD_MASTER_PASSPHRASE to enable AES-GCM wrap"
-                )
+            logger.warning(
+                "Plaintext database backup explicitly requested: ip=%s",
+                request.remote_addr,
+            )
 
         # WARN-level audit log so backup downloads are visible in
         # operator dashboards filtering WARN-and-above. Records the
         # caller IP and whether the download was AES-GCM-wrapped.
-        encrypted_on_disk = encrypt_param and crypto_available()
         logger.warning(
             "Database backup downloaded: size=%d bytes ip=%s encrypted=%s",
             backup_size,

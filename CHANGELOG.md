@@ -9,10 +9,41 @@ Alongside the standard sections, a "Breaking" section marks changes
 that require operator action; these are surfaced at the top of stable
 release notes.
 
-## [Unreleased]
+## [2.97.10] - 2026-09-20
 
 ### Fixed
 
+- Podping checks every Hive node when the listener starts and every five minutes while it is enabled. System Health identifies the active node, refreshes while Settings is open, and has a Check now action that also works when the listener is off.
+- Reviewer inconclusive responses no longer count as provider outages, and retries wait for the circuit breaker recovery window.
+
+## [2.97.9] - 2026-09-20
+
+### Fixed
+
+- Podping failover replaces the unavailable `hived.emre.sh` endpoint with `api.deathwing.me` and adds `techcoderx.com` as another fallback.
+- The Queue navigation badge keeps readable contrast when Queue is selected.
+- OPML export actions now sit below their description instead of leaving a large blank gap beside the taller backup card.
+
+## [2.97.8] - 2026-09-20
+
+### Added
+
+- System Health can expand Podping into concise rows with each node's endpoint, latest HTTP status, and last-seen time. The last connected node survives restarts, and the panel notes that RSS polling is independent of Podping health (#762).
+- Settings now provides global defaults for chapter generation, verification, and cross-fetch detection. Feeds inherit them unless explicitly overridden. The automatic migration preserves every existing feed choice, including the legacy automatic cross-fetch mode, while new feeds inherit the globals (#763).
+- A Queue page combines active progress and cancellation, the complete paginated waiting list, episode links, priority controls, and queue tuning. Queue counts use the full server-reported backlog, and the global status popover links to the page (#764).
+- Processing run history now shows total duration and wall-clock timing for each pipeline stage, plus one FFmpeg total. Stage timings may overlap. Detection, transcription, and verification are labeled when skipped instead of appearing as zero (#765).
+
+### Changed
+
+- Fuzzy text-pattern matching now uses RapidFuzz's optimized partial-ratio alignment with the existing length-adjusted score cutoff, avoiding the Python window scan on every candidate (#766).
+
+### Fixed
+
+- Database backup downloads now fail closed when encryption is requested but no master passphrase is configured. A separate plaintext action shows a warning and requires a second click. Audit logs record the file's actual encryption state.
+- Verification now maps nested evidence spans and boundary records back to original-audio timestamps after pass 1 cuts. Review and validation use those original coordinates, while cutting keeps the processed-audio copy.
+- Provider request rejections unrelated to pass settings no longer retry with defaults or consume the episode retry limit. Local CUDA transcription releases a failed Whisper pipeline before retrying with a new instance, and a run that exhausts GPU memory no longer retries the whole episode.
+- Search index rebuilds read source rows on a dedicated SQLite connection, so batched shadow writes do not try to upgrade a stale WAL snapshot. Concurrent commits are replayed from the change journal, and transient write contention is retried without losing indexed data.
+- OPML export actions now keep equal dimensions on narrow screens when one label wraps.
 - On a phone, the LLM spend From and To date inputs no longer overrun the card. They now size to the date they hold and sit together on one line instead of stretching full width, which the native date control could push past the card edge.
 
 ## [2.97.7] - 2026-09-18
