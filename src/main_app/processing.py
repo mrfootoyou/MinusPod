@@ -1,4 +1,6 @@
 """Processing pipeline: _process_episode_background, all pipeline stages."""
+import functools
+import inspect
 import json
 import logging
 import os
@@ -202,12 +204,20 @@ def _require_publication_owner(slug: str, episode_id: str) -> None:
         _check_cancel(None, slug, episode_id, run_id)
 
 
+@functools.lru_cache(maxsize=None)
+def _method_accepts_run_id(method: str) -> bool:
+    params = inspect.signature(getattr(status_service, method)).parameters
+    return 'run_id' in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 def _publish_status(method: str, slug: str, episode_id: str, *args):
     _require_publication_owner(slug, episode_id)
     run_id = getattr(run_context.current(), 'run_id', None)
-    if run_id:
-        return getattr(status_service, method)(slug, episode_id, *args, run_id=run_id)
-    return getattr(status_service, method)(slug, episode_id, *args)
+    fn = getattr(status_service, method)
+    if run_id and _method_accepts_run_id(method):
+        return fn(slug, episode_id, *args, run_id=run_id)
+    return fn(slug, episode_id, *args)
 
 
 @contextmanager
@@ -4065,32 +4075,33 @@ def _generate_assets(slug, episode_id, segments, all_cuts, episode_description,
                             return
             chapters_gen = ChaptersGenerator()
             clear_fallback(episode_id, PASS_CHAPTER_GENERATION)
-            try:
-                chapters = chapters_gen.generate_chapters(
-                    segments,
-                    episode_description=episode_description,
-                    ads_removed=all_cuts,
-                    podcast_name=podcast_name,
-                    episode_title=episode_title,
-                    episode_id=episode_id,
-                    replacement_duration=replacement_duration,
-                    segment_markers=markers,
-                    slug=slug,
-                )
-            except ProviderRateLimitedError as e:
-                # The audio is already cut, so hold the queue and publish ad
-                # chapters only rather than failing the run.
-                hold_until = None
+            with _measure_run_stage('chapters'):
                 try:
-                    hold_until = hold_queue_for_provider_limit(
-                        db, e, slug=slug, episode_id=episode_id,
-                        podcast_name=podcast_name, phase='chapters')
-                except Exception:
-                    audio_logger.exception(
-                        f"[{slug}:{episode_id}] Failed to record the rate-limit hold")
-                chapters = None
-                chapters_gen.chapters_degraded = True
-                chapters_gen.chapters_degradation_reason = hold_message(hold_until, e)
+                    chapters = chapters_gen.generate_chapters(
+                        segments,
+                        episode_description=episode_description,
+                        ads_removed=all_cuts,
+                        podcast_name=podcast_name,
+                        episode_title=episode_title,
+                        episode_id=episode_id,
+                        replacement_duration=replacement_duration,
+                        segment_markers=markers,
+                        slug=slug,
+                    )
+                except ProviderRateLimitedError as e:
+                    # The audio is already cut, so hold the queue and publish ad
+                    # chapters only rather than failing the run.
+                    hold_until = None
+                    try:
+                        hold_until = hold_queue_for_provider_limit(
+                            db, e, slug=slug, episode_id=episode_id,
+                            podcast_name=podcast_name, phase='chapters')
+                    except Exception:
+                        audio_logger.exception(
+                            f"[{slug}:{episode_id}] Failed to record the rate-limit hold")
+                    chapters = None
+                    chapters_gen.chapters_degraded = True
+                    chapters_gen.chapters_degradation_reason = hold_message(hold_until, e)
             if run_stats is not None and chapters_gen.chapters_degraded:
                 run_stats['chapters_degraded'] = True
                 run_stats['chapters_degraded_reason'] = chapters_gen.chapters_degradation_reason

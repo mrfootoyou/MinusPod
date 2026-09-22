@@ -976,6 +976,28 @@ def _podcast_listing_fields(podcast, podping) -> dict:
     }
 
 
+def get_feeds_export_list(db) -> list[dict]:
+    """All feeds with override fields, unpaginated, for GET /system/config-export."""
+    feed_auth_key = get_feed_auth_key(db)
+    podping = _podping_context(db)
+    feeds = []
+    for podcast in db.get_all_podcasts():
+        feed_url = _public_feed_url(podcast['slug'], feed_auth_key)
+        entry = {
+            **_podcast_base_json(podcast, feed_url),
+            **_podcast_listing_fields(podcast, podping),
+            'lastEpisodeDate': podcast.get('last_episode_date'),
+            # Upstream RSS URL the instance polls, explicit for bug reports
+            # about a host serving bad RSS (redact_config strips credentials).
+            'sourceFeedUrl': podcast.get('source_url'),
+        }
+        # author/p20 are identity metadata (Podcasting 2.0 owner/lock), not config.
+        entry.pop('author', None)
+        entry.pop('p20', None)
+        feeds.append(entry)
+    return feeds
+
+
 _FEEDS_DEFAULT_LIMIT = 50
 _FEEDS_MAX_LIMIT = 200
 _LATEST_EPISODES_DEFAULT_PER_FEED = 3

@@ -12,7 +12,7 @@ info:
     - Monitor system status and trigger cleanup operations
     - Manage cross-episode ad patterns with network and podcast scope
     - Submit corrections to improve ad detection accuracy
-  version: 2.97.10
+  version: 2.97.14
   contact:
     name: MinusPod
   license:
@@ -7025,6 +7025,56 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /system/config-export:
+    get:
+      tags:
+        - System
+      summary: Download instance configuration
+      description: |
+        Downloads settings, feed, and webhook configuration as pretty-printed
+        JSON, ready to attach to a bug report. A redaction pass drops
+        secret-shaped keys (API keys, passwords, tokens, the feed auth key,
+        webhook secrets), strips credentials and tracking query params from
+        URLs, and reduces each webhook URL to scheme + host. Limited to 6/hour.
+      operationId: exportConfig
+      responses:
+        '200':
+          description: Redacted instance configuration file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: 'Attachment filename: minuspod-config-YYYYMMDD-HHMMSS.json'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings:
+                    type: object
+                  feeds:
+                    type: array
+                    items:
+                      type: object
+                  webhooks:
+                    type: array
+                    items:
+                      type: object
+                  system:
+                    type: object
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /system/db-backup/run:
     post:
       summary: Run a scheduled-style DB backup now
@@ -12202,6 +12252,11 @@ components:
                   type:
                     - number
                     - 'null'
+                chaptersSeconds:
+                  type:
+                    - number
+                    - 'null'
+                  description: Chapter generation. Included in assetsSeconds.
                 finalizeSeconds:
                   type:
                     - number

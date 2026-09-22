@@ -37,7 +37,7 @@ class TestFeed304Refresh(unittest.TestCase):
             'channel_metadata_at': '2026-07-26T00:00:00Z',
         }
         # Episodes exist
-        db.get_episodes.return_value = ([], 5)
+        db.has_episodes.return_value = True
 
         # Upstream returns 304 (feed_content=None, but etag present)
         rss_parser.fetch_feed_conditional.return_value = (None, '"abc123"', None)
@@ -70,7 +70,7 @@ class TestFeed304Refresh(unittest.TestCase):
             'etag': '"abc123"', 'last_modified': None,
             'artwork_cached': False
         }
-        db.get_episodes.return_value = ([], 5)
+        db.has_episodes.return_value = True
 
         # First call returns 304, second call (forced full fetch) returns content
         rss_parser.fetch_feed_conditional.side_effect = [
@@ -91,6 +91,65 @@ class TestFeed304Refresh(unittest.TestCase):
         refresh_rss_feed('test-podcast', 'https://example.com/rss')
 
         # Should have done a full fetch (second call to fetch_feed_conditional with no etag)
+        self.assertEqual(rss_parser.fetch_feed_conditional.call_count, 2)
+        second_call = rss_parser.fetch_feed_conditional.call_args_list[1]
+        self.assertIsNone(second_call[1].get('etag'))
+
+    @patch('main_app.feeds.pattern_service')
+    @patch('main_app.feeds.status_service')
+    @patch('main_app.feeds.storage')
+    @patch('main_app.feeds.rss_parser')
+    @patch('main_app.feeds.db')
+    def test_304_with_only_completed_episodes_does_not_force_a_full_fetch(
+        self, db, rss_parser, storage, status_service, pattern_service
+    ):
+        """A feed whose episodes are all 'completed' has 0 'discovered' rows;
+        counting any status keeps it on the cheap 304 path every cycle."""
+        db.get_podcast_row.return_value = {
+            'id': 1, 'feed_url': 'https://example.com/rss',
+            'etag': '"abc123"', 'last_modified': None,
+            'artwork_cached': True,
+            'podping_checked_at': '2026-07-26T00:00:00Z',
+            'channel_metadata_at': '2026-07-26T00:00:00Z',
+        }
+        db.has_episodes.return_value = True
+        rss_parser.fetch_feed_conditional.return_value = (None, '"abc123"', None)
+        storage.load_data_json.return_value = {'feed_url': 'https://example.com/rss'}
+
+        outcome = refresh_rss_feed('test-podcast', 'https://example.com/rss')
+
+        self.assertEqual(outcome.status, 'not_modified')
+        rss_parser.fetch_feed_conditional.assert_called_once()
+        db.has_episodes.assert_called_once_with('test-podcast')
+
+    @patch('main_app.feeds.pattern_service')
+    @patch('main_app.feeds.status_service')
+    @patch('main_app.feeds.storage')
+    @patch('main_app.feeds.rss_parser')
+    @patch('main_app.feeds.db')
+    def test_304_with_zero_episodes_still_forces_a_full_fetch(
+        self, db, rss_parser, storage, status_service, pattern_service
+    ):
+        db.get_podcast_row.return_value = {
+            'id': 1, 'feed_url': 'https://example.com/rss',
+            'etag': '"abc123"', 'last_modified': None,
+            'artwork_cached': True,
+        }
+        db.has_episodes.return_value = False
+        rss_parser.fetch_feed_conditional.side_effect = [
+            (None, '"abc123"', None),
+            ('<rss>full</rss>', '"abc123"', None),
+        ]
+        storage.load_data_json.return_value = {'feed_url': 'https://example.com/rss'}
+        parsed_feed = MagicMock()
+        parsed_feed.feed.get.side_effect = lambda k, default='': 'Test Podcast' if k == 'title' else default
+        parsed_feed.entries = []
+        rss_parser.parse_feed.return_value = parsed_feed
+        rss_parser.modify_feed.return_value = '<rss>modified</rss>'
+        db.get_processed_episodes_for_feed.return_value = []
+
+        refresh_rss_feed('test-podcast', 'https://example.com/rss')
+
         self.assertEqual(rss_parser.fetch_feed_conditional.call_count, 2)
         second_call = rss_parser.fetch_feed_conditional.call_args_list[1]
         self.assertIsNone(second_call[1].get('etag'))

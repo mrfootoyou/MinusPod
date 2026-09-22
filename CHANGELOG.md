@@ -9,6 +9,54 @@ Alongside the standard sections, a "Breaking" section marks changes
 that require operator action; these are surfaced at the top of stable
 release notes.
 
+## [2.97.14] - 2026-09-22
+
+### Changed
+
+- README now documents the MinusPodJev experiment and its limited support scope.
+
+### Fixed
+
+- History duration summaries no longer display impossible values such as `17m 60s` when rounded seconds reach the next minute.
+- Audio editor transport controls remain reachable at narrow viewport widths, and zooming the waveform no longer also scrolls the editor.
+- Configuration exports now remove URL queries, fragments, opaque paths, and webhook templates while preserving only known provider endpoint paths in settings.
+- Configuration exports use the bundled public suffix list when masking instance-domain mentions.
+- Ollama native chat requests preserve configured thinking levels and retain rate-limit response headers for retry timing.
+
+## [2.97.13] - 2026-09-22
+
+### Fixed
+
+- The configuration export also masks email addresses and any mention of this instance's domain outside URLs, and leaves out feed author and Podcasting 2.0 owner fields.
+
+## [2.97.12] - 2026-09-22
+
+### Changed
+
+- The configuration export hides this instance's own host as `<domain>` and any provider or transcription endpoint that is not a well-known public service as `<private-host>`, keeping the scheme and path so a bug report still shows how the instance is wired.
+
+### Fixed
+
+- System Status shows LLM input and output tokens on two lines instead of wrapping mid-phrase on a phone.
+- The cue and ad editor transport controls stay on one row with the speed selector on phones instead of wrapping.
+
+## [2.97.11] - 2026-09-21
+
+### Added
+
+- Settings > Data Management has a Configuration Export card. It downloads the instance settings, feed configuration, and webhooks as JSON with every API key, token, password, and feed key removed, ready to attach to a bug report (#781).
+- Processing run history shows chapter generation as its own timing row. It is included in the assets stage total, and reads "Unavailable" when chapters were not generated.
+
+### Fixed
+
+- Detection and verification windows lost to a provider outage are retried once the circuit breaker recovers. The breaker wait now adds a 1 s margin so a retry cannot land just inside the cooldown, a final retry that only hit an open breaker gets one more attempt, and after a pass any windows lost to server errors or connectivity are swept once more. A run previously finished with part of the episode unexamined when a provider returned 500s for a minute.
+- The Ollama context window setting (`num_ctx`) is now sent. Ollama's OpenAI-compatible endpoint cannot accept it, so when the setting is on the Ollama client uses the native chat API, which honors it (#780).
+- LLM answers shaped `{"ad_segments": [...]}` are now parsed; they previously counted as zero ads (#780).
+- The low ad yield rerun no longer fails to publish its queue entry. The status publisher passes the run id to every status method, and the queue method did not accept it.
+- A feed body that fails to parse is refetched once before the feed enters parse backoff. A host serving a body cut mid-document usually returns a complete one on the next request, so the 30 minute backoff no longer delays new episodes for a one-off glitch.
+- A feed whose episodes are all processed no longer forces a full fetch on every refresh. The unchanged-feed path counted only unprocessed episodes to decide whether the feed had been discovered.
+- The search index rebuild holds the write lock for milliseconds instead of about 10 s during the swap. The old FTS5 table is renamed aside and purged in small batches after the swap instead of being dropped inside the swap transaction.
+
 ## [2.97.10] - 2026-09-20
 
 ### Fixed

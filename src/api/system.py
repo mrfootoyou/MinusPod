@@ -502,6 +502,56 @@ def backup_database():
                 pass
 
 
+@api.route('/system/config-export', methods=['GET'])
+@limiter.limit("6 per hour")
+@log_request
+def export_config():
+    """Download instance settings and feed configuration as redacted JSON."""
+    import platform
+    from urllib.parse import urlsplit
+
+    from api.feeds import get_feeds_export_list
+    from api.settings import _build_settings_payload
+    from utils.config_export import build_domain_identity, redact_config
+    from utils.gpu import get_gpu_device_name
+    from webhook_service import load_webhooks
+
+    base_host = (urlsplit(os.environ.get('BASE_URL', 'http://localhost:8000')).hostname or '').lower()
+    instance_hosts = frozenset({h for h in (base_host, 'localhost') if h})
+    domain_identity = build_domain_identity(base_host)
+
+    db = get_database()
+    whisper = _effective_whisper_config(db)
+    document = {
+        'settings': _build_settings_payload(),
+        'feeds': get_feeds_export_list(db),
+        'webhooks': load_webhooks(db),
+        'system': {
+            'version': _get_version(),
+            'exportedAt': utc_now_iso(),
+            'whisperBackend': whisper['whisperBackend'],
+            'whisperModel': whisper['whisperModel'],
+            'whisperDevice': whisper['whisperDevice'],
+            'gpuName': get_gpu_device_name(),
+            'platform': platform.machine(),
+        },
+    }
+    redacted = redact_config(document, instance_hosts=instance_hosts, domain_identity=domain_identity)
+
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    filename = f"minuspod-config-{timestamp}.json"
+    body = json.dumps(redacted, indent=2, sort_keys=True)
+
+    logger.warning(
+        "Configuration export downloaded: feeds=%d ip=%s",
+        len(redacted.get('feeds', [])), request.remote_addr,
+    )
+
+    response = Response(body, mimetype='application/json')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
+
+
 @api.route('/system/db-backup/run', methods=['POST'])
 @limiter.limit('6/hour')
 @log_request

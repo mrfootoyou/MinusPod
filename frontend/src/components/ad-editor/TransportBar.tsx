@@ -6,12 +6,8 @@ import { focusRing } from '../../components/fieldStyles';
 import { useOutsideClick } from '../../hooks/useOutsideClick';
 import { tint } from '../badgeStyles';
 
-// Shared playback transport bar for the audio-editor modals (AdReviewModal and
-// CueMarkModal). Purely presentational: the host owns the <audio> element, the
-// playhead loop, and all handlers. Rendering from one component keeps the two
-// modals' controls identical. All controls (transport, the optional amber
-// "play selection" icon, and the speed selector) sit on one centered row that
-// wraps as a unit on narrow screens; the selection readout is centered below.
+// Shared editor controls; the host owns audio, playhead, and handlers.
+// Wrap only when controls cannot fit on one row.
 interface TransportBarProps {
   isPlaying: boolean;
   onTogglePlay: () => void;
@@ -101,11 +97,11 @@ function TransportBar({
           <button type="button" onClick={onStop} className={`p-1.5 rounded ${ghostBtn} ${focusRing}`} title="Stop (pause + return to START)">
             <Square className="w-4 h-4" />
           </button>
-          <div className="relative ml-1" ref={speedRef}>
+          <div className="relative ml-0.5" ref={speedRef}>
             <button
               type="button"
               onClick={() => setSpeedOpen((o) => !o)}
-              className={`h-8 px-2 rounded inline-flex items-center gap-1 text-xs font-semibold tabular-nums ${ghostBtn} focus:outline-hidden focus:ring-2 focus:ring-ring`}
+              className={`h-8 px-1.5 rounded inline-flex items-center gap-1 text-xs font-semibold tabular-nums ${ghostBtn} focus:outline-hidden focus:ring-2 focus:ring-ring`}
               title="Playback speed"
               aria-expanded={speedOpen}
               aria-label="Playback speed"

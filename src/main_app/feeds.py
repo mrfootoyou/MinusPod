@@ -284,9 +284,9 @@ def refresh_rss_feed(slug: str, feed_url: str, force: bool = False,
 
         # Handle 304 Not Modified - feed hasn't changed
         if feed_content is None and (new_etag or new_last_modified):
-            # If no episodes exist yet (pre-v1.0.41 feed), force full fetch for initial discovery
-            _, discovered_count = db.get_episodes(slug, status='discovered', limit=1)
-            if discovered_count > 0:
+            # If no episodes exist yet (pre-v1.0.41 feed), force full fetch for initial
+            # discovery; a fully-processed feed still has rows here, of any status.
+            if db.has_episodes(slug):
                 # Even on 304, ensure artwork is cached (may be missing after DB restore)
                 podcast = db.get_podcast_row(slug)
                 # A 304 carries no body, so a steady-state feed would never
@@ -345,6 +345,14 @@ def refresh_rss_feed(slug: str, feed_url: str, force: bool = False,
         # mid-outage. A clean parse of an empty placeholder feed still
         # counts as success.
         parsed_feed = rss_parser.parse_feed(feed_content, source=slug)
+        if parsed_feed is None:
+            # One immediate refetch usually clears a body cut in transfer before falling back to backoff.
+            refresh_logger.info(f"[{slug}] Feed body failed to parse; refetching once")
+            feed_content, new_etag, new_last_modified = rss_parser.fetch_feed_conditional(
+                feed_url, etag=None, last_modified=None
+            )
+            if feed_content:
+                parsed_feed = rss_parser.parse_feed(feed_content, source=slug)
         if not parsed_feed or (not parsed_feed.feed and not parsed_feed.entries
                                and getattr(parsed_feed, 'bozo', False)):
             refresh_logger.error(f"[{slug}] Fetched feed could not be parsed as RSS")
