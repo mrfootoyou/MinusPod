@@ -131,8 +131,8 @@ def strip_comments_from_prompt(prompt: str|None) -> str|None:
     if not prompt:
         return prompt
     # A comment indented four or more spaces is markdown code and stays.
-    pattern = (r'^([ ]{0,3})<!--.*?-->(?:\r?\n)?'
+    pattern = (r'^([ ]{0,3})<!--(?:.|\n)*?-->(?:\r?\n)?'
                r'|^([ ]{4,}<!--.*?-->)'
                r'|<!--.*?-->')
     return re.sub(pattern, lambda m: m.group(1) or m.group(2) or '',
-                  prompt, flags=re.MULTILINE | re.DOTALL)
+                  prompt, flags=re.MULTILINE)
