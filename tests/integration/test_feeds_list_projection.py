@@ -3,6 +3,7 @@ projection: GET /feeds?page=&limit= and
 GET /feeds?includeLatestEpisodes=true&episodesPerFeed=N.
 """
 import os
+import json
 import sys
 import tempfile
 
@@ -95,6 +96,18 @@ def test_feed_with_fewer_episodes_returns_fewer(app_client, feeds):
     match = next(f for f in body['feeds'] if f['slug'] == slug)
     assert len(match['latestEpisodes']) == 1
     assert match['latestEpisodes'][0]['id'] == 'only-ep'
+
+
+def test_latest_projection_uses_source_feed_title_patterns(app_client, feeds):
+    db = feeds['db']
+    slug = feeds['slugs'][1]
+    db.update_podcast(slug, title_skip_patterns=json.dumps(['*ep-*']))
+    _seed_episode(db, slug, 'ep-skip', published_at='2026-01-01T00:00:00Z')
+
+    body = app_client.get(
+        '/api/v1/feeds?includeLatestEpisodes=true&episodesPerFeed=3').get_json()
+    match = next(f for f in body['feeds'] if f['slug'] == slug)
+    assert match['latestEpisodes'][0]['titleSkipped'] is True
 
 
 def test_feed_with_no_episodes_returns_empty_projection(app_client, feeds):

@@ -180,6 +180,7 @@ export interface EpisodeSummary {
   description?: string | null;
   error?: string | null;
   pendingReviewCount?: number;
+  titleSkipped?: boolean;
   passthroughEnabled?: boolean | null;
   hasBeenProcessed?: boolean;
 }
@@ -222,6 +223,7 @@ export interface Episode {
   ad_count?: number;
   hasOriginalAudio?: boolean;
   pendingReviewCount?: number;
+  titleSkipped?: boolean;
   error?: string | null;
   artworkUrl?: string | null;
   // Set once, on the first successful processing run, and left untouched

@@ -429,6 +429,43 @@ def test_artwork_upload_on_subscribed_feed_400(app_client, subscribed_feed):
     assert resp.status_code == 400
 
 
+def test_patch_local_title_skip_pattern_marks_episode_in_list(app_client, local_feed):
+    slug = local_feed['slug']
+    db = local_feed['db']
+    db.upsert_episode(slug, 'episode-1', original_url='local://episode-1',
+                      status='discovered', title='Weekly Sponsor Update')
+
+    _authed(app_client)
+    resp = app_client.patch(
+        f'/api/v1/feeds/{slug}',
+        json={'titleSkipPatterns': ['Weekly Sponsor*']},
+        headers=_csrf_headers(app_client),
+    )
+
+    assert resp.status_code == 200
+    episodes = app_client.get(f'/api/v1/feeds/{slug}/episodes').get_json()['episodes']
+    assert episodes[0]['titleSkipped'] is True
+
+
+def test_patch_local_episode_reports_title_skip(app_client, local_feed):
+    slug = local_feed['slug']
+    db = local_feed['db']
+    episode_id = 's01e01'
+    db.update_podcast(slug, title_skip_patterns=json.dumps(['Weekly Sponsor*']))
+    db.upsert_episode(slug, episode_id, original_url=f'local://{episode_id}',
+                      status='discovered', title='Weekly Sponsor Update')
+
+    _authed(app_client)
+    resp = app_client.patch(
+        f'/api/v1/feeds/{slug}/episodes/{episode_id}',
+        json={'title': 'Weekly Sponsor Update'},
+        headers=_csrf_headers(app_client),
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()['titleSkipped'] is True
+
+
 # -- GET /feeds list serialization --
 
 def test_bulk_delete_local_feed_preserves_original(app_client, local_feed):

@@ -980,7 +980,8 @@ class EpisodeMixin:
                       "AND e.published_at IS NOT NULL AND e.published_at >= ?")
     _RECENTS_SOURCE_COLS = ("p.slug AS source_slug, "
                             "COALESCE(NULLIF(p.title_override, ''), NULLIF(p.title, ''), p.slug) AS source_title, "
-                            "p.feed_type AS source_feed_type, p.chapters_in_notes AS source_chapters_in_notes")
+                            "p.feed_type AS source_feed_type, p.chapters_in_notes AS source_chapters_in_notes, "
+                            "p.title_skip_patterns AS source_title_skip_patterns")
 
     def count_recent_processed_episodes(self, since: str) -> int:
         return self.get_connection().execute(

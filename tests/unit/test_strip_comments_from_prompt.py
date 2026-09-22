@@ -42,3 +42,17 @@ def test_strip_comments_from_prompt_does_not_support_nested_comments():
     prompt = '<!-- start <!--nested--> end -->'
 
     assert strip_comments_from_prompt(prompt) == ' end -->'
+
+def test_strip_comments_from_prompt_mixes_inline_multiline_and_literal_comments():
+    prompt = (
+        'Before <!-- inline -->\r\n'
+        '<!--\r\nmultiline\r\n-->\r\n'
+        '    <!-- literal\r\n    still literal -->\r\n'
+        'After <!--\r\ntext before comment -->'
+    )
+
+    assert strip_comments_from_prompt(prompt) == (
+        'Before \r\n'
+        '    <!-- literal\r\n    still literal -->\r\n'
+        'After <!--\r\ntext before comment -->'
+    )

@@ -8,6 +8,7 @@ paths (400 responses), which return before any background processing starts;
 the jobState tests below mock start_background_processing to reach the
 queued/processing/409 branches without spinning a real pipeline.
 """
+import json
 import os
 import sys
 from unittest.mock import patch
@@ -126,6 +127,60 @@ def test_bulk_delete_omits_job_state(app_client, seeded_episode, _auth):
 
     assert r.status_code == 200
     assert 'jobState' not in (r.get_json() or {})
+
+
+def test_bulk_process_skips_title_patterns_for_discovered_and_pending(
+        app_client, seeded_episode, _auth):
+    slug = seeded_episode['slug']
+    db = seeded_episode['db']
+    db.update_podcast(slug, title_skip_patterns=json.dumps(['Skipped*']))
+    db.upsert_episode(slug, 'bb22cc33dd44', original_url='https://example.com/a.mp3',
+                      title='Skipped discovered', status='discovered')
+    db.upsert_episode(slug, 'cc33dd44ee55', original_url='https://example.com/b.mp3',
+                      title='Skipped pending', status='pending')
+
+    response = app_client.post(
+        f'/api/v1/feeds/{slug}/episodes/bulk',
+        json={'episodeIds': ['bb22cc33dd44', 'cc33dd44ee55'], 'action': 'process'},
+    )
+
+    assert response.status_code == 200
+    body = response.get_json() or {}
+    assert body['queued'] == 0
+    assert body['skipped'] == 2
+    assert {item['episodeId'] for item in body['skippedEpisodes']} == {
+        'bb22cc33dd44', 'cc33dd44ee55'}
+
+
+def test_bulk_reprocess_allows_manual_title_skipped_selection(
+        app_client, seeded_episode, _auth):
+    slug = seeded_episode['slug']
+    db = seeded_episode['db']
+    db.update_podcast(slug, title_skip_patterns=json.dumps(['Test*']))
+    episode_id = seeded_episode['episode_id']
+
+    response = app_client.post(
+        f'/api/v1/feeds/{slug}/episodes/bulk',
+        json={'episodeIds': [episode_id], 'action': 'reprocess'},
+    )
+
+    assert response.status_code == 200
+    assert (response.get_json() or {}).get('queued') == 1
+
+
+def test_bulk_delete_allows_manual_title_skipped_selection(
+        app_client, seeded_episode, _auth):
+    slug = seeded_episode['slug']
+    db = seeded_episode['db']
+    db.update_podcast(slug, title_skip_patterns=json.dumps(['Test*']))
+
+    response = app_client.post(
+        f'/api/v1/feeds/{slug}/episodes/bulk',
+        json={'episodeIds': [seeded_episode['episode_id']], 'action': 'delete'},
+    )
+
+    assert response.status_code == 200
+    assert (response.get_json() or {}).get('skipped') == 0
 
 
 @patch('main_app.processing.start_background_processing', return_value=(True, 'started'))

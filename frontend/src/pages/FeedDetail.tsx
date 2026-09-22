@@ -243,18 +243,41 @@ function FeedDetail() {
   });
 
   const bulkMutation = useMutation({
+    // Process accepts only rows the server can queue; other actions preserve
+    // the full manual selection.
     mutationFn: ({ action }: { action: BulkAction }) =>
-      bulkEpisodeAction(slug!, Array.from(effectiveSelectedIds), action),
-    onSuccess: (result, _variables, context) => {
+      bulkEpisodeAction(
+        slug!,
+        action === 'process'
+          ? episodes
+              .filter(ep => effectiveSelectedIds.has(ep.id)
+                && (ep.status === 'discovered' || ep.status === 'pending')
+                && !ep.titleSkipped)
+              .map(ep => ep.id)
+          : Array.from(effectiveSelectedIds),
+        action),
+    onSuccess: (result: BulkActionResult, _variables, context: { ids: string[] } | undefined) => {
       setBulkResult(result);
-      applyEpisodeJobState(queryClient, slug!, context.ids, jobStateOf(result));
+      const skippedIds = new Set(
+        (result.skippedEpisodes ?? []).map((item) => item.episodeId));
+      applyEpisodeJobState(
+        queryClient, slug!, (context?.ids ?? []).filter(id => !skippedIds.has(id)),
+        jobStateOf(result));
       setSelectedIds(new Set());
       setSelectionAnchor(null);
       setShowBulkDeleteConfirm(false);
       queryClient.invalidateQueries({ queryKey: ['episodes', slug] });
       queryClient.invalidateQueries({ queryKey: ['feed', slug] });
     },
-    onMutate: () => ({ ids: Array.from(effectiveSelectedIds) }),
+    onMutate: ({ action }: { action: BulkAction }): { ids: string[] } => ({
+      ids: action === 'process'
+        ? episodes
+            .filter(ep => effectiveSelectedIds.has(ep.id)
+              && (ep.status === 'discovered' || ep.status === 'pending')
+              && !ep.titleSkipped)
+            .map(ep => ep.id)
+        : Array.from(effectiveSelectedIds),
+    }),
     onError: (err) => {
       setShowBulkDeleteConfirm(false);
       setActionError(getErrorMessage(err, 'Could not apply that action.'));
@@ -350,8 +373,8 @@ function FeedDetail() {
   // Bulk-action eligibility: count per-action so a mixed selection still
   // surfaces actionable buttons (backend skips ineligible rows).
   const selectedEpisodes = episodes.filter(ep => effectiveSelectedIds.has(ep.id));
-  const discoveredCount = selectedEpisodes.filter(ep => ep.status === 'discovered').length;
-  const pendingCount = selectedEpisodes.filter(ep => ep.status === 'pending').length;
+  const discoveredCount = selectedEpisodes.filter(ep => ep.status === 'discovered' && !ep.titleSkipped).length;
+  const pendingCount = selectedEpisodes.filter(ep => ep.status === 'pending' && !ep.titleSkipped).length;
   const processedCount = selectedEpisodes.filter(ep =>
     ['completed', 'failed', 'permanently_failed', 'deferred'].includes(ep.status)
   ).length;
