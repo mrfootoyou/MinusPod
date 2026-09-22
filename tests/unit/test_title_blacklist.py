@@ -12,6 +12,7 @@ from tests.app_bootstrap import bootstrap
 _test_data_dir = bootstrap('title_blacklist_test_')
 
 from config import title_matches_skip_patterns
+from api.episodes import _episode_base_json
 import main_app.feeds as feeds_mod
 from main_app import app, background
 from rss_parser import RSSParser
@@ -48,6 +49,18 @@ class TestTitleMatchesSkipPatterns:
 
     def test_none_title_returns_false(self):
         assert not title_matches_skip_patterns(None, json.dumps(['*']))
+
+    def test_episode_summary_reports_title_skip(self):
+        episode = {
+            'episode_id': 'episode-1',
+            'title': 'Weekly Sponsor Update',
+            'status': 'discovered',
+            'created_at': '2026-09-12T00:00:00Z',
+        }
+        assert _episode_base_json(
+            episode,
+            title_skip_patterns=json.dumps(['weekly sponsor*']),
+        )['titleSkipped']
 
 
 class TestRssGateSkipsBlacklistedTitles:
