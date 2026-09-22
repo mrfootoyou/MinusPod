@@ -313,6 +313,65 @@ describe('FeedDetail: bulk pass-through (#746)', () => {
 });
 
 describe('FeedDetail: bulk toolbar', () => {
+  it('sends only process-eligible rows from a mixed selection', async () => {
+    const user = userEvent.setup();
+    mockBulkEpisodeAction.mockResolvedValue({ queued: 1, skipped: 1, freedMb: 0, errors: [] });
+    renderFeedDetail(makeFeed(), [
+      {
+        id: 'ep-processable', title: 'Discovered', published: '2026-09-11T00:00:00Z',
+        status: 'discovered', jobState: 'idle',
+      },
+      {
+        id: 'ep-completed', title: 'Completed', published: '2026-09-10T00:00:00Z',
+        status: 'completed', jobState: 'idle',
+      },
+    ]);
+
+    await user.click(await screen.findByRole('checkbox', { name: 'Select all on page' }));
+    await user.click(screen.getByRole('button', { name: 'Process now (1)' }));
+    await waitFor(() => {
+      expect(mockBulkEpisodeAction).toHaveBeenCalledWith(
+        'test-feed', ['ep-processable'], 'process');
+    });
+  });
+
+  it('excludes title-skipped discovered and pending rows from Process', async () => {
+    const user = userEvent.setup();
+    renderFeedDetail(makeFeed(), [
+      {
+        id: 'ep-title-skipped-discovered', title: 'Skipped discovered',
+        published: '2026-09-11T00:00:00Z', status: 'discovered', jobState: 'idle',
+        titleSkipped: true,
+      },
+      {
+        id: 'ep-title-skipped-pending', title: 'Skipped pending',
+        published: '2026-09-10T00:00:00Z', status: 'pending', jobState: 'idle',
+        titleSkipped: true,
+      },
+    ]);
+
+    await user.click(await screen.findByRole('checkbox', { name: 'Select all on page' }));
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Process now/ })).toBeNull();
+  });
+
+  it('keeps title-skipped rows selectable for manual actions but excludes processing', async () => {
+    const user = userEvent.setup();
+    renderFeedDetail(makeFeed(), [{
+      id: 'ep-title-skipped',
+      title: 'Skipped episode',
+      published: '2026-09-11T00:00:00Z',
+      status: 'completed',
+      jobState: 'idle',
+      titleSkipped: true,
+    }]);
+
+    await user.click(await screen.findByRole('button', { name: 'Select episode' }));
+    expect(screen.queryByRole('button', { name: /Process now/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Reprocess \(1\)/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Delete \(1\)/ })).toBeTruthy();
+  });
+
   it('gives every bulk button the 44px tap floor', async () => {
     const user = userEvent.setup();
     renderFeedDetail(makeFeed(), [{

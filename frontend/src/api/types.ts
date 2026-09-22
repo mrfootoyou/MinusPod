@@ -180,6 +180,7 @@ export interface EpisodeSummary {
   description?: string | null;
   error?: string | null;
   pendingReviewCount?: number;
+  titleSkipped?: boolean;
   passthroughEnabled?: boolean | null;
   hasBeenProcessed?: boolean;
 }

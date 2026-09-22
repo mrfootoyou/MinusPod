@@ -11429,6 +11429,9 @@ components:
         pendingReviewCount:
           type: integer
           description: Ads held for human review on this episode, so a dashboard row can show the hold chip.
+        titleSkipped:
+          type: boolean
+          description: Whether the episode title matches this feed's title-skip patterns and is ineligible for the bulk Process action.
         passthroughEnabled:
           type: boolean
           description: Per-episode pass-through override, same meaning as EpisodeSummary.passthroughEnabled.
@@ -11485,7 +11488,7 @@ components:
           description: Number of ads held for human review (not yet approved or dismissed)
         titleSkipped:
           type: boolean
-          description: Episode title matches this feed's title-skip patterns and is ineligible for bulk processing.
+          description: Whether the episode title matches this feed's title-skip patterns and is ineligible for the bulk Process action.
         passthroughEnabled:
           type: boolean
           description: Per-episode pass-through override (issue #746). When true, this episode is relayed with no transcription, ad detection, or cutting, even when the feed's own processing mode is not passthrough. The audio may still be transcoded to MP3 when the publisher's enclosure is not already MP3, since the serving stack names episode files .mp3 and declares audio/mpeg. Set via POST /feeds/{slug}/episodes/passthrough.

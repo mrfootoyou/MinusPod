@@ -292,7 +292,9 @@ def list_episodes(slug):
         item = _episode_base_json(
             ep, slug=owner_slug,
             is_local=(ep.get('source_feed_type') == 'local') if source_slug else is_local,
-            storage=storage)
+            storage=storage,
+            title_skip_patterns=(ep.get('source_title_skip_patterns')
+                                 if source_slug else podcast.get('title_skip_patterns')))
         item['ad_count'] = ep['ads_removed']
         item['episodeNumber'] = ep.get('episode_number')
         item['jobState'] = _job_state(
@@ -678,7 +680,9 @@ def get_episode(slug, episode_id):
         except (json.JSONDecodeError, TypeError):
             dai_differential = None
 
-    base = _episode_base_json(episode, slug=slug, is_local=is_local, storage=storage)
+    base = _episode_base_json(
+        episode, slug=slug, is_local=is_local, storage=storage,
+        title_skip_patterns=podcast.get('title_skip_patterns'))
     # Separate from description: the local-episode editor round-trips that
     # field, and the block must never be written back (#720).
     base['chapterNotes'] = (format_chapter_block(episode.get('chapters_json'))

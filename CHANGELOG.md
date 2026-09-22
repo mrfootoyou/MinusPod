@@ -9,6 +9,14 @@ Alongside the standard sections, a "Breaking" section marks changes
 that require operator action; these are surfaced at the top of stable
 release notes.
 
+## [Unreleased]
+
+### Fixed
+
+- Prompt comment stripping preserves multiline examples embedded in text or indented as code.
+- Bulk processing respects feed title-skip rules while delete and manual single-episode processing remain available.
+- Reviewer calibration saves its result before another worker can start, preventing older results from overwriting newer results.
+
 ## [2.97.14] - 2026-09-22
 
 ### Changed

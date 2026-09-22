@@ -243,18 +243,41 @@ function FeedDetail() {
   });
 
   const bulkMutation = useMutation({
+    // Process accepts only rows the server can queue; other actions preserve
+    // the full manual selection.
     mutationFn: ({ action }: { action: BulkAction }) =>
-      bulkEpisodeAction(slug!, Array.from(effectiveSelectedIds), action),
-    onSuccess: (result, _variables, context) => {
+      bulkEpisodeAction(
+        slug!,
+        action === 'process'
+          ? episodes
+              .filter(ep => effectiveSelectedIds.has(ep.id)
+                && (ep.status === 'discovered' || ep.status === 'pending')
+                && !ep.titleSkipped)
+              .map(ep => ep.id)
+          : Array.from(effectiveSelectedIds),
+        action),
+    onSuccess: (result: BulkActionResult, _variables, context: { ids: string[] } | undefined) => {
       setBulkResult(result);
-      applyEpisodeJobState(queryClient, slug!, context.ids, jobStateOf(result));
+      const skippedIds = new Set(
+        (result.skippedEpisodes ?? []).map((item) => item.episodeId));
+      applyEpisodeJobState(
+        queryClient, slug!, (context?.ids ?? []).filter(id => !skippedIds.has(id)),
+        jobStateOf(result));
       setSelectedIds(new Set());
       setSelectionAnchor(null);
       setShowBulkDeleteConfirm(false);
       queryClient.invalidateQueries({ queryKey: ['episodes', slug] });
       queryClient.invalidateQueries({ queryKey: ['feed', slug] });
     },
-    onMutate: () => ({ ids: Array.from(effectiveSelectedIds) }),
+    onMutate: ({ action }: { action: BulkAction }): { ids: string[] } => ({
+      ids: action === 'process'
+        ? episodes
+            .filter(ep => effectiveSelectedIds.has(ep.id)
+              && (ep.status === 'discovered' || ep.status === 'pending')
+              && !ep.titleSkipped)
+            .map(ep => ep.id)
+        : Array.from(effectiveSelectedIds),
+    }),
     onError: (err) => {
       setShowBulkDeleteConfirm(false);
       setActionError(getErrorMessage(err, 'Could not apply that action.'));

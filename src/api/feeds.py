@@ -1026,7 +1026,8 @@ def _sort_podcasts(podcasts: list[dict], sort_by: str, sort_dir: str) -> list[di
                   reverse=reverse)
 
 
-def _episode_summary_json(ep, *, slug, is_local, storage, job_states) -> dict:
+def _episode_summary_json(ep, *, slug, is_local, storage, job_states,
+                          title_skip_patterns=None) -> dict:
     """Bounded per-feed episode projection for the /feeds listing.
 
     Reuses the episode-list serializer so the grouped dashboard view matches
@@ -1034,7 +1035,9 @@ def _episode_summary_json(ep, *, slug, is_local, storage, job_states) -> dict:
     second way. Trimmed to the fields the dashboard card renders, plus the
     hold, pass-through and error signals a card must not silently drop.
     """
-    base = _episode_base_json(ep, slug=slug, is_local=is_local, storage=storage)
+    base = _episode_base_json(
+        ep, slug=slug, is_local=is_local, storage=storage,
+        title_skip_patterns=title_skip_patterns)
     description = ep.get('description')
     return {
         'id': base['id'],
@@ -1048,6 +1051,7 @@ def _episode_summary_json(ep, *, slug, is_local, storage, job_states) -> dict:
         'artworkUrl': base['artworkUrl'],
         'error': base['error'],
         'pendingReviewCount': base['pendingReviewCount'],
+        'titleSkipped': base['titleSkipped'],
         'passthroughEnabled': base['passthroughEnabled'],
         'hasBeenProcessed': base['hasBeenProcessed'],
         'description': truncate(description, 200) if description else None,
@@ -1127,7 +1131,8 @@ def list_feeds():
             feed_json['latestEpisodes'] = [
                 _episode_summary_json(
                     ep, slug=podcast['slug'], is_local=is_local_feed(podcast),
-                    storage=storage, job_states=job_states)
+                    storage=storage, job_states=job_states,
+                    title_skip_patterns=podcast.get('title_skip_patterns'))
                 for ep in latest_by_podcast.get(podcast['id'], [])
             ]
         feeds.append(feed_json)

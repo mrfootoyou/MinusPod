@@ -47,6 +47,7 @@ def test_membership_uses_publish_date_not_processing_time():
     db = _db()
     _seed_source('alpha')
     _seed_source('beta', feed_type='local')
+    _db().update_podcast('beta', title_skip_patterns=json.dumps(['s01*']))
     _seed_episode('alpha', 'aaaaaaaaaaa1', '2026-09-01T00:00:00Z')
     _seed_episode('alpha', 'aaaaaaaaaaa2', '2026-09-10T00:00:00Z')
     _seed_episode('beta', 's01e01', '2026-09-11T00:00:00Z')
@@ -57,6 +58,7 @@ def test_membership_uses_publish_date_not_processing_time():
         ('beta', 's01e01'), ('alpha', 'aaaaaaaaaaa2')]
     assert db.count_recent_processed_episodes('2026-09-05') == 2
     assert rows[0]['source_title'] == 'Beta' and rows[0]['source_feed_type'] == 'local'
+    assert rows[0]['source_title_skip_patterns'] == json.dumps(['s01*'])
 
 
 def test_membership_paginates_and_never_includes_a_recents_row():

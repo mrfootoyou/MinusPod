@@ -56,6 +56,10 @@ class TestTitleMatchesSkipPatterns:
             'title': 'Weekly Sponsor Update',
             'status': 'discovered',
             'created_at': '2026-09-12T00:00:00Z',
+            'processed_at': None,
+            'original_duration': None,
+            'new_duration': None,
+            'ads_removed': 0,
         }
         assert _episode_base_json(
             episode,
