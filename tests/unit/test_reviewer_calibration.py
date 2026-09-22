@@ -384,6 +384,54 @@ def test_a_save_during_a_run_supersedes_that_run_result(client, calibration_runs
     assert stored['revision'] == calibration_revision()
 
 
+def test_a_save_during_publication_runs_the_newest_revision(client, calibration_runs,
+                                                            monkeypatch):
+    db = _build_db()
+    db.set_setting('review_provider', 'primary', is_default=False)
+    db.set_setting('review_model', 'old-model', is_default=False)
+    db.clear_setting('reviewer_calibration_last')
+    saved = threading.Event()
+    release = threading.Event()
+    original_set_setting = Database.set_setting
+
+    def blocked_set_setting(instance, key, value, is_default=False):
+        if key == 'reviewer_calibration_last' and not saved.is_set():
+            saved.set()
+            assert release.wait(timeout=5)
+        return original_set_setting(instance, key, value, is_default)
+
+    monkeypatch.setattr(Database, 'set_setting', blocked_set_setting)
+    assert _save_settings(client, {'reviewModel': 'first-model'}).status_code == 200
+    assert saved.wait(timeout=5)
+    assert calib_mod._CALIBRATION_STATE['running'] is True
+    assert _save_settings(client, {'reviewModel': 'second-model'}).status_code == 200
+    release.set()
+    assert calibration_runs.wait_idle()
+    stored = json.loads(db.get_setting('reviewer_calibration_last'))
+    assert stored['model'] == 'second-model'
+
+
+def test_publication_failure_releases_calibration_worker(client, calibration_runs,
+                                                         monkeypatch):
+    db = _build_db()
+    db.set_setting('review_provider', 'primary', is_default=False)
+    db.set_setting('review_model', 'old-model', is_default=False)
+    failed = False
+    original_set_setting = Database.set_setting
+
+    def failing_set_setting(instance, key, value, is_default=False):
+        nonlocal failed
+        if key == 'reviewer_calibration_last' and not failed:
+            failed = True
+            raise RuntimeError('publication failed')
+        return original_set_setting(instance, key, value, is_default)
+
+    monkeypatch.setattr(Database, 'set_setting', failing_set_setting)
+    assert _save_settings(client, {'reviewModel': 'first-model'}).status_code == 200
+    assert calibration_runs.wait_idle()
+    assert calib_mod._CALIBRATION_STATE['running'] is False
+
+
 def test_calibration_routes_to_the_review_slot_not_the_global_client():
     """Regression: calibration must build the review slot's client and use
     its model, not send the review model to the global/primary endpoint."""

@@ -447,16 +447,26 @@ def _calibration_worker(db):
 
         with _CALIBRATION_LOCK:
             superseded = _CALIBRATION_STATE['revision'] != revision
-            if not superseded:
-                _CALIBRATION_STATE['running'] = False
         if superseded:
             logger.info("Reviewer calibration result discarded: settings changed "
                         "while it ran")
             continue
+        if result is not None:
+            try:
+                db.set_setting('reviewer_calibration_last', json.dumps(result),
+                               is_default=False)
+            except Exception:
+                logger.exception("Reviewer calibration result could not be saved")
+                result = None
+        with _CALIBRATION_LOCK:
+            superseded = _CALIBRATION_STATE['revision'] != revision
+            if not superseded:
+                _CALIBRATION_STATE['running'] = False
+        if superseded:
+            logger.info("Reviewer calibration result superseded during save")
+            continue
         if result is None:
             return
-        db.set_setting('reviewer_calibration_last', json.dumps(result),
-                       is_default=False)
         agreement = result.get('agreement', 0.0)
         msg = (f"Reviewer calibration for {result.get('model')!r}: "
                f"agreement={agreement:.3f}")
