@@ -3,9 +3,11 @@
 Provides shared transcript text extraction functions.
 """
 
+import heapq
 import math
 import re
 
+from itertools import count
 from utils.time import parse_timestamp
 
 # Edge-proximity tolerance for cut/trim boundaries. Used by the
@@ -286,3 +288,233 @@ def timed_spans_from_segments(
                       'text': text, 'offset': offset})
         offset += len(text) + 1
     return spans
+
+
+def _segment_text_to_word_segments(seg: dict) -> list[dict] | None:
+    """Convert a segment's text into word-level segments.
+    Args:
+        seg: A dictionary containing `text`, `start`, and `end` keys.
+    Returns:
+      A list of word-level segments with interpolated `start` and `end`
+      times, or None if `seg` is invalid.
+    """
+    text = seg.get('text')
+    if not isinstance(text, str):
+        return None # bad input
+    try:
+        start = float(seg.get('start')) # type: ignore
+        end = float(seg.get('end')) # type: ignore
+    except (ValueError, TypeError):
+        return None # bad input
+    return _text_to_word_segments(text, start, end)
+
+def _text_to_word_segments(text: str, start: float, end: float) -> list[dict]:
+    """Convert `text` into word-level segments.
+    Returns:
+        A list of word-level segments with interpolated `start` and `end` times.
+    """
+    word_segments = []
+    words = text.split() # splits on whitespace, omits empty
+    word_start = start
+    word_delta = (end - start) / len(words)
+    for w in words:
+        word_segments.append({
+            'word': f" {w}",  # include leading space, even at start
+            'start': round(word_start, 3),
+            'end': round(word_start + word_delta, 3)
+        })
+        word_start += word_delta
+    if word_segments: # preserve exact start/end
+        word_segments[0]['start'] = start
+        word_segments[-1]['end'] = end
+    return word_segments
+
+_END_SENTENCE_PUNCTUATION = ('.', '!', '?')
+_END_QUOTES = ('"', '\u2019', '\u201d') # end quote chars
+
+def _split_segment_into_sentences(seg: dict,
+                                  do_not_interpolate: bool = False
+                                  ) -> list[dict]:
+    """Attempts to split the given segment into individual sentences based on
+    clear punctuation. See `split_segments_into_sentences` for usage.
+    """
+    seg_words = seg.get('words')
+    if not isinstance(seg_words, list):
+        seg_words = None if do_not_interpolate else _segment_text_to_word_segments(seg)
+    if not seg_words:
+        return [seg] # cannot split into sentences without word segments
+
+    sentences = []
+    first_word, next_word = 0, 0
+    while next_word < len(seg_words) - 1: # we handle the last word/sentence below
+        word_seg = seg_words[next_word]
+        word = (word_seg if isinstance(word_seg, dict) else {}).get('word')
+        if not isinstance(word, str):
+            return [seg] # bad input
+
+        if (
+            (len(word) >= 1 and word[-1] in _END_SENTENCE_PUNCTUATION) or
+            (len(word) >= 2 and word[-1] in _END_QUOTES and word[-2] in _END_SENTENCE_PUNCTUATION)
+        ):
+            # found end of sentence
+            sentence = seg_words[first_word:next_word+1]
+            sentences.append({
+                # each word includes leading space, if any (supports hyphenation)
+                'text': ''.join(w['word'] for w in sentence).strip(),
+                'start': sentence[0].get('start'),
+                'end': sentence[-1].get('end'),
+                'words': sentence
+            })
+            first_word = next_word + 1
+        next_word += 1
+
+    # handle the last word/sentence
+    if first_word == 0:
+        sentences.append(seg) # already a single sentence
+    else:
+        sentence = seg_words[first_word:]
+        sentences.append({
+            'text': ''.join(w['word'] for w in sentence).strip(),
+            'start': sentence[0].get('start'),
+            'end': sentence[-1].get('end'),
+            'words': sentence
+        })
+
+    return sentences
+
+def split_segments_into_sentences(segments: list[dict],
+                                  do_not_interpolate: bool = False
+                                  ) -> tuple[list[dict], int]:
+    """Attempts to split the given segments into individual sentences based on
+    clear punctuation. Each input segment is assumed to contain at least one
+    complete sentence, thus segments will only be split and never merged.
+
+    Args:
+        segments (list[dict]): A list of segments, where each segment is a
+          dictionary containing either a `words` key containing an ordered
+          list of word-level segments, or a `text`, `start`, and `end` keys
+          from which the words can be interpolated.
+        do_not_interpolate (bool): If True, the function will not attempt to
+          interpolate missing `words` from `text`, `start`, and `end` keys.
+
+    Returns:
+        tuple[list[dict], int]: A tuple containing a list of segments split into
+          individual sentences and an integer indicating how many additional
+          segments were created. If anything goes wrong, the original segments
+          are returned unchanged.
+    """
+    sentence_segments = []
+    for seg in segments:
+        sentence_segments += _split_segment_into_sentences(
+            seg, do_not_interpolate=do_not_interpolate,
+        )
+    return sentence_segments, len(sentence_segments) - len(segments)
+
+
+def _segment_duration(seg: dict) -> float:
+    return float(seg['end']) - float(seg['start'])
+
+def _segment_gap(left: dict, right: dict) -> float:
+    return float(right['start']) - float(left['end'])
+
+def merge_segments(segments: list[dict],
+                   maximum_gap: float = 0.5,
+                   minimum_duration: float = 5.0,
+                   maximum_duration: float = 30.0,
+                   ) -> tuple[list[dict], int]:
+    """Merge all segments with a duration less than `minimum_duration`
+    with its shortest near neighbor. Segments will only be merged if
+    the gap between them is less than `maximum_gap` and the merged
+    segment does not exceed `maximum_duration`.
+
+    This gives best results when the input segments are focused (e.g.
+    sentences) and `maximum_gap` is less than the time between segments
+    (~0.5-1.0 second) and more than the time between related sentences
+    (~0.1-0.5 second).
+
+    Args:
+        segments: List of segment dicts with valid `start` and `end` keys
+          and ordered by `start` and `end`.
+        maximum_gap (float): The maximum allowed gap (in seconds) between
+          segments to consider them for merging. Segments separated by a
+          gap larger than this will not be merged.
+        minimum_duration (float): Segments shorter than this duration will
+          be merged with their shortest nearest neighbor.
+        maximum_duration (float): The maximum length of merged segments
+          (in seconds). If a merged segment would exceed this duration, it
+          will not be merged.
+    Returns:
+        A list of segments and an integer indicating how many segments
+        were merged.
+    """
+    original_len = len(segments)
+    if len(segments) <= 1 or minimum_duration <= 0.0:
+        return segments, 0
+
+    # Algorithm: Merge shortest segments first:
+    # 1. Find all short segments.
+    # 2. Sort by shortest duration.
+    # 3. Merge each short segment with shortest near neighbor.
+
+    # use a "priority queue" ordered by shortest segment duration
+    short_segments = []
+    tie_breaker = count()
+    def maybe_queue_short_segment(seg: dict) -> bool:
+        duration = _segment_duration(seg)
+        if duration < minimum_duration:
+            # tie-breaker ensures that heapq never compares the segment dicts
+            # when there are duplicate durations
+            heapq.heappush(short_segments, (duration, next(tie_breaker), seg))
+            return True
+        return False
+
+    # make a copy of all segments to avoid modifying the originals
+    segments = [seg.copy() for seg in segments]
+    for seg in segments:
+        maybe_queue_short_segment(seg)
+
+    while short_segments:
+        # we cant remove merged segments from the heap but we can skip
+        # them if the queued duration does not match the current duration
+        queued_duration, _, shortest = heapq.heappop(short_segments)
+        duration = _segment_duration(shortest)
+        if duration != queued_duration:
+            continue # outdated/merged since it was queued
+
+        # try to merge...
+        merged = None
+        i = segments.index(shortest)
+        left = segments[i - 1] if i > 0 else None
+        right = segments[i + 1] if (i + 1) < len(segments) else None
+        left_dur = _segment_duration(left) if left else math.inf
+        right_dur = _segment_duration(right) if right else math.inf
+        if (left
+            and left_dur < right_dur # choose smaller neighbor
+            and _segment_gap(left, shortest) < maximum_gap # must be near
+            and left_dur + duration <= maximum_duration # must not exceed maximum duration
+        ):
+            # merge [left <-- shortest]
+            left['end'] = shortest['end']
+            if left.get('text') or shortest.get('text'):
+                left['text'] = ' '.join([left.get('text', ''), shortest.get('text', '')])
+            if left.get('words') or shortest.get('words'):
+                left['words'] = left.get('words', []) + shortest.get('words', [])
+            merged = left
+
+        elif (right
+              and _segment_gap(shortest, right) < maximum_gap # must be near
+              and duration + _segment_duration(right) <= maximum_duration # must not exceed maximum duration
+        ):
+            # merge [shortest --> right]
+            right['start'] = shortest['start']
+            if right.get('text') or shortest.get('text'):
+                right['text'] = ' '.join([shortest.get('text', ''), right.get('text', '')])
+            if right.get('words') or shortest.get('words'):
+                right['words'] = shortest.get('words', []) + right.get('words', [])
+            merged = right
+
+        if merged:
+            segments.remove(shortest)
+            maybe_queue_short_segment(merged)
+
+    return segments, original_len - len(segments)
