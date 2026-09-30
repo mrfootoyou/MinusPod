@@ -7,6 +7,7 @@ unchanged from the pre-split module.
 import logging
 import math
 import re
+from typing import Any, cast
 
 from utils.markers import (
     carve_fragment,
@@ -25,6 +26,7 @@ from utils.markers import (
     recorded_member_spans,
     word_timed_edge_valid,
 )
+from utils.segments import normalize_segment, split_and_merge_segments
 from utils.text import get_transcript_text_for_range
 from utils.time import overlap_seconds, ranges_overlap
 from sponsor_context import domain_labels
@@ -267,28 +269,17 @@ def refine_ad_boundaries(ads: list[dict], segments: list[dict]) -> list[dict]:
             return None
 
         # Validate words have required timestamp fields and filter out invalid ones
-        valid_words = []
-        for w in words:
-            word_text = w.get('word', '').strip()
-            word_start = w.get('start')
-            word_end = w.get('end')
-
-            # Skip words missing timestamps
-            if word_start is None or word_end is None:
-                continue
-
-            valid_words.append({
-                'word': word_text,
-                'start': word_start,
-                'end': word_end
-            })
+        valid_words = [
+            w for w in words
+            if (w.get('start') is not None and w.get('end') is not None)
+        ]
 
         if not valid_words:
             logger.warning("No valid word timestamps found, skipping phrase detection")
             return None
 
         # Build text from validated words for phrase matching
-        word_texts = [w['word'].lower() for w in valid_words]
+        word_texts = [w.get('word', '').strip().lower() for w in valid_words]
         full_text = ' '.join(word_texts)
 
         matches = []
@@ -500,73 +491,24 @@ def _timed_utterances(segment: dict, memo: dict | None = None) -> list[dict] | N
 
 def _compute_timed_utterances(segment: dict) -> list[dict] | None:
     """Return complete word-timed utterances, or None for unreliable timing."""
-    words = segment.get('words')
-    if not isinstance(words, list) or not words:
+    if not 'words' in segment:
         return None
-    timed = []
-    previous_start = segment['start']
-    for word in words:
-        if not isinstance(word, dict) or not isinstance(word.get('word'), str):
-            return None
-        start, end = word.get('start'), word.get('end')
-        if (not isinstance(start, (int, float))
-                or not isinstance(end, (int, float))
-                or not math.isfinite(start) or not math.isfinite(end)
-                or start < previous_start - 0.05 or end < start
-                or start < segment['start'] - 0.05
-                or end > segment['end'] + 0.05
-                or not word.get('word', '').strip()):
-            return None
-        timed.append(word)
-        previous_start = start
-    segment_text = segment.get('text')
-    if not isinstance(segment_text, str):
+    try:
+        valid_segment = normalize_segment(cast(Any, segment))
+        return cast(list[dict], split_and_merge_segments([valid_segment]))
+    except:
         return None
-    if (re.findall(r'\w+', ' '.join(word['word'] for word in timed).lower())
-            != re.findall(r'\w+', segment_text.lower())):
-        return None
-    utterances = []
-    current = []
-    abbreviations = {'mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'st.'}
-    for word in timed:
-        current.append(word)
-        token = word['word'].strip().lower()
-        if token.endswith(('.', '!', '?')) and token not in abbreviations:
-            utterances.append(current)
-            current = []
-    if current:
-        utterances.append(current)
-    return [
-        {
-            'start': group[0]['start'], 'end': group[-1]['end'],
-            'text': ' '.join(word['word'].strip() for word in group).lower(),
-            'words': group,
-            'terminal': group[-1]['word'].strip().endswith(('.', '!', '?')),
-        }
-        for group in utterances
-    ]
-
 
 def timed_line_segments(segments: list[dict]) -> list[dict]:
     """Split reliable word timing into transcript lines without losing words."""
     lines = []
     for seg in segments:
         # An already split line re-splits to itself; windows are built from split lines.
-        utterances = None if seg.get('word_timed_line') else _timed_utterances(seg)
+        utterances = None if seg.get('word_timed_line') is True else _timed_utterances(seg)
         if utterances is None:
             lines.append(seg.copy())
             continue
-        for utterance in utterances:
-            words = utterance['words']
-            for offset in range(0, len(words), 25):
-                group = words[offset:offset + 25]
-                lines.append({
-                    'start': group[0]['start'],
-                    'end': group[-1]['end'],
-                    'text': ' '.join(word['word'].strip() for word in group),
-                    'words': group,
-                    'word_timed_line': True,
-                })
+        lines.extend(utterances)
     return lines
 
 
