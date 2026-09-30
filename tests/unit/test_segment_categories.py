@@ -130,6 +130,7 @@ class TestParseAdsFromResponseCarriesCategory:
             "reason": "ad", "sponsor": "X", "category": "advertisement",
         }])
         ads = parse_ads_from_response(response)
+        assert len(ads) == 1
         assert 'category' not in ads[0]
 
     def test_missing_category_field_stays_absent(self):

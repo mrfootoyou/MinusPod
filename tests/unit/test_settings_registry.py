@@ -49,7 +49,7 @@ SEED_SNAPSHOT = {
     'audio_bitrate': '128k',
     'audio_encoder_compression_level': 'default',
     'chapter_prompt': ('sha256', 'ba78ae10ed245f1b215407d2980358cdf6aff6b5f64dfc1662c6f6848cb418b4'),
-    'pattern_cleanup_prompt': ('sha256', '9afdc1f10e265d421a8d39f04ff0a13e00275ac436aa51517c2b3a7d2213f145'),
+    'pattern_cleanup_prompt': ('sha256', '7f134a614aac65c377ce4c8f72884291f8e6412f23aff37fb8889bde1760b1cc'),
     'audio_normalize_enabled': 'false',
     'audio_replacement_sound_enabled': 'true',
     'audio_mp3_stream_copy_enabled': 'false',
@@ -141,7 +141,7 @@ SEED_SNAPSHOT = {
     'queue_fresh_boost': '5',
     'queue_bulk_boost': '0',
     'segment_category_actions': '{}',
-    'system_prompt': ('sha256', '20ed55333d9e12d653308a379cb8c69a354fe04fd4e62c90abf749fec7d9031e'),  # Updated for cross_promo semantics change
+    'system_prompt': ('sha256', '4744ff764fc64932ec46507c6f7840be2dcae6ebcc5469c6b054d4d6818119c2'),  # Updated for cross_promo semantics change
     'transcribe_chunk_overlap_seconds': '30',
     'transcribe_concurrent_chunks': '4',
     'whisper_api_timeout_seconds': '600',
@@ -153,7 +153,7 @@ SEED_SNAPSHOT = {
     'transition_threshold_db': '3.5',
     'verification_miss_autocut_min_confidence': '0',
     'verification_miss_hold_min_confidence': '0.60',
-    'verification_prompt': ('sha256', 'fd2d0c90e63226bc5f43ad148611c06d1dec441e55569e98f5a531ac08e1ed4d'),
+    'verification_prompt': ('sha256', '9b6e241e51e1dd7d481d77576bce6d168634577f745876f261a6427d8f342e74'),
     'volume_threshold_db': '3.0',
     'vtt_transcripts_enabled': 'true',
     'whisper_language': 'en',
@@ -613,7 +613,7 @@ class TestShippedPromptsTrackTheDefault:
         from utils.constants import DEFAULT_SYSTEM_PROMPT
         values = dict(iter_refreshable_defaults())
         assert values['system_prompt'] == DEFAULT_SYSTEM_PROMPT
-        assert 'CATEGORY:' in values['system_prompt']
+        assert '## Categories' in values['system_prompt']
 
 
 def test_youtube_reset_keys_cover_every_default_but_the_switch():

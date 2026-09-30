@@ -16,6 +16,7 @@ from typing import NamedTuple
 
 from audio_enforcer import AudioEnforcer
 from cancel import _check_cancel
+from database import DEFAULT_VERIFICATION_PROMPT, VERIFICATION_PROMPT_EXAMPLES
 from llm_client import (
     get_llm_client, get_api_key, LLMClient,
     is_connectivity_error, is_retryable_error, is_not_found_error,
@@ -52,8 +53,10 @@ from utils.markers import (
     subtract_spans,
 )
 from utils.prompt import (
-    format_sponsor_block, render_prompt, apply_override, seed_sponsors_enabled,
-    format_detection_notes_block, scrub_description, strip_comments_from_prompt
+    format_prompt_list, format_prompt_section, format_sponsor_block, render_prompt,
+    apply_override, seed_sponsors_enabled,
+    scrub_description, strip_comments_from_prompt,
+    finalize_prompt, format_prompt_code_block,
 )
 from utils.text import most_mentioned, truncate, word_boundary_re
 from utils.short_asks import stamp_short_ask
@@ -105,6 +108,10 @@ from text_pattern_matcher import is_defined_pattern
 from transcriber.segments import drop_loop_cues, find_loop_runs
 from text_recurrence import format_recurrence_hint
 from utils.constants import (
+    DEFAULT_SYSTEM_PROMPT,
+    DETECTION_PROMPT_EXAMPLES,
+    DETECTION_PROMPT_OUTPUT_FORMAT,
+    DETECTION_PROMPT_SPONSOR_WATCHLISTS,
     INVALID_SPONSOR_VALUES,
     canonical_sponsor, is_brand_token,
     LEARNING_MIN_CONFIDENCE, LEARNING_MIN_CONFIDENCE_LONG,
@@ -975,11 +982,18 @@ class AdDetector:
         except Exception as e:
             logger.warning(f"Could not load system prompt from DB: {e}")
         if not prompt:
-            from utils.constants import DEFAULT_SYSTEM_PROMPT
             prompt = DEFAULT_SYSTEM_PROMPT
         prompt = strip_comments_from_prompt(prompt)
-        return self._apply_pass_override(
-            self._render_with_sponsors(prompt, 'seed_sponsors_detection'), 'system_prompt_override')
+        prompt = render_prompt(
+            prompt, 
+            sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+            output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+            examples=strip_comments_from_prompt(DETECTION_PROMPT_EXAMPLES),
+        )
+        prompt = self._render_with_sponsors(prompt, 'seed_sponsors_detection')
+        prompt = self._apply_pass_override(prompt, 'system_prompt_override')
+        return finalize_prompt(prompt)
+
 
     def get_verification_prompt(self) -> str:
         """Get verification prompt from database or default, with dynamic sponsors substituted."""
@@ -990,11 +1004,17 @@ class AdDetector:
         except Exception as e:
             logger.warning(f"Could not load verification prompt from DB: {e}")
         if not prompt:
-            from database import DEFAULT_VERIFICATION_PROMPT
             prompt = DEFAULT_VERIFICATION_PROMPT
         prompt = strip_comments_from_prompt(prompt)
-        return self._apply_pass_override(
-            self._render_with_sponsors(prompt, 'seed_sponsors_verification'), 'verification_prompt_override')
+        prompt = render_prompt(
+            prompt, 
+            sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+            output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+            examples=strip_comments_from_prompt(VERIFICATION_PROMPT_EXAMPLES),
+        )
+        prompt = self._render_with_sponsors(prompt, 'seed_sponsors_verification')
+        prompt = self._apply_pass_override(prompt, 'verification_prompt_override')
+        return finalize_prompt(prompt)
 
     def _get_sponsor_list_safely(self) -> str:
         """Pull the dynamic sponsor list, returning empty string on any error."""
@@ -1126,24 +1146,6 @@ class AdDetector:
             aligned.append(updated)
         return aligned
 
-    def _build_detection_system_prompt(self, slug: str, addressing_mode: str = 'timestamps') -> str:
-        """Compose the system prompt for detection window calls.
-
-        Appends SHOW_SEGMENTS_PROMPT_SECTION to get_system_prompt() when the
-        podcast opted in, after override resolution, so a customized system_prompt
-        still gets the show-segments instructions. Appends
-        SEGMENT_ID_SYSTEM_SECTION when ``addressing_mode`` is 'segment_ids', after
-        the show-segments section so both layer independently.
-        """
-        prompt = self.get_system_prompt()
-        if self._podcast_wants(slug, 'detect_show_segments', 'detect_show_segments'):
-            prompt = f"{prompt}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
-        if self._podcast_wants(slug, 'snip_short_asks', 'snip_short_asks'):
-            prompt = f"{prompt}\n\n{SHORT_ASKS_PROMPT_SECTION}"
-        if addressing_mode == 'segment_ids':
-            prompt = f"{prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-        return f"{prompt}{AD_QUOTE_ANCHOR_SECTION}"
-
     _HINT_TIER1_CAP = 12
     _HINT_SNIPPET_CHARS = 90
 
@@ -1170,7 +1172,7 @@ class AdDetector:
             if is_defined_pattern(p) and len(tier1) < self._HINT_TIER1_CAP:
                 snippet = truncate(p.get('intro_text') or p.get('outro_text') or '', self._HINT_SNIPPET_CHARS)
                 category = sponsor_categories.get(key) or p.get('category') or 'sponsor'
-                line = f"- {sponsor} ({category} read)."
+                line = f"{sponsor} ({category})."
                 if snippet:
                     line += f' Opens like: "{snippet}"'
                 tier1.append(line)
@@ -1181,19 +1183,24 @@ class AdDetector:
         # A sponsor-level category still reaches the prompt when every pattern
         # naming it is auto-learned, which the tier above leaves nameless.
         categorized = [
-            f"- {name} ({sponsor_categories[key]} read)."
+            f"{name} ({sponsor_categories[key]})."
             for key, name in sorted(names.items())
             if key in sponsor_categories and key not in tier1_keys
         ]
         leftovers = sorted(name for key, name in names.items() if key not in sponsor_categories)
-        parts = []
+        prompt_hint = ""
         if tier1 or categorized:
-            parts.append("Known recurring ads on this feed:\n" + "\n".join(tier1 + categorized))
+            prompt_hint += format_prompt_section(
+                "Previously identified segments to watch out for",
+                format_prompt_list(tier1 + categorized)
+            )
         if leftovers:
-            parts.append(f"Previously detected sponsors for this podcast: {', '.join(leftovers)}")
-        parts.append("Reads for the sponsors above are ads on this feed; "
-                     "report them with the stated category.")
-        return "\n".join(parts) + "\n"
+            prompt_hint += format_prompt_section(
+                "Previously identified sponsors to watch out for",
+                ", ".join(leftovers),
+                one_line=True
+            )
+        return prompt_hint
 
     def _apply_sponsor_segment_categories(self, ads, slug, episode_id):
         """Stamp the operator's per-sponsor segment category onto ads naming that sponsor."""
@@ -1287,11 +1294,21 @@ class AdDetector:
         window_end = window['end']
 
         transcript_lines = self._format_transcript_lines(window_segments, addressing_mode)
+
+        # `audio_context` only used in "timestamps" mode since it is based on
+        # timestamps and is useless in indexed mode.
+        # Suggestion: Insert audio cues into the transcript instead of making the
+        # LLM figure out where they belong.
         audio_context = audio_enforcer.format_for_window(
             audio_analysis, window_start, window_end
-        ) if audio_enforcer else ""
+        ) if audio_enforcer and addressing_mode == 'timestamps' else ""
+
+        # `recurrence_context` only used in "timestamps" mode since it is based on
+        # timestamps and is useless in indexed mode. We could probably lookup the
+        # index of each recurrence span if needed.
         recurrence_context = format_recurrence_hint(
-            recurrence_spans or [], window_start, window_end)
+            recurrence_spans, window_start, window_end
+        ) if recurrence_spans and addressing_mode == 'timestamps' else ""
 
         prompt = format_window_prompt(
             podcast_name=podcast_name,
@@ -2005,34 +2022,48 @@ class AdDetector:
                        f"for {total_duration/60:.1f}min episode")
 
             # Get prompts and model
-            system_prompt = self._build_detection_system_prompt(slug, addressing_mode)
+            system_prompt = self.get_system_prompt()
             model = self.get_model()
 
             logger.info(f"[{slug}:{episode_id}] Using model: {model}")
             log_assembled_system_prompt(slug, episode_id, system_prompt)
 
             # Prepare description section (shared across windows)
+            # Don't worry about having too many empty lines -- they will be
+            # collapsed before sending to LLM.
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section = f"Podcast Description:\n{podcast_description}\n\n"
+                description_section += format_prompt_section(
+                    "Podcast Description",
+                    format_prompt_code_block(podcast_description)
+                )
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed podcast description ({len(podcast_description)} chars)")
-            description_section += format_detection_notes_block(detection_notes)
+
+            detection_notes = detection_notes.strip() if detection_notes else ""
+            if detection_notes:
+                description_section += format_prompt_section(
+                    "Podcast User Notes",
+                    format_prompt_code_block(detection_notes),
+                )
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
+                description_section += format_prompt_section(
+                    "Episode Description (may list sponsors)",
+                    format_prompt_code_block(episode_description)
+                )
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed episode description ({len(episode_description)} chars)")
 
             # Add podcast-specific known-pattern hint from ad_patterns
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:
-                description_section += sponsor_history
+                description_section += sponsor_history + "\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including known-pattern hint: {sponsor_history.strip()}")
 
             # Add learned ad-break position hint (issue #360 experiment)
             if positional_prior_hint:
-                description_section += positional_prior_hint
+                description_section += positional_prior_hint + "\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including positional prior hint: "
                             f"{positional_prior_hint.splitlines()[0]}")
 
@@ -2043,9 +2074,8 @@ class AdDetector:
                 action_map = self._resolve_segment_action_map(slug)
 
             # Gates the category repair pass and category-miss warning on whether
-            # per-category actions are configured for this feed. Checks system_prompt
-            # for SHOW_SEGMENTS_PROMPT_SECTION to avoid a second DB call.
-            show_segments_enabled = SHOW_SEGMENTS_PROMPT_SECTION in system_prompt
+            # per-category actions are configured for this feed.
+            show_segments_enabled = self._podcast_wants(slug, 'detect_show_segments', 'detect_show_segments')
             segment_categories_configured = show_segments_enabled or (
                 action_map is not None
                 and any(action != DEFAULT_SEGMENT_ACTION
@@ -2568,10 +2598,21 @@ class AdDetector:
                     model = self.get_model()
                     kc_desc = ""
                     if podcast_description:
-                        kc_desc += f"Podcast Description:\n{podcast_description}\n\n"
-                    kc_desc += format_detection_notes_block(detection_notes)
+                        kc_desc += format_prompt_section(
+                            "Podcast Description",
+                            format_prompt_code_block(podcast_description),
+                        )
+                    detection_notes = detection_notes.strip() if detection_notes else ""
+                    if detection_notes:
+                        kc_desc += format_prompt_section(
+                            "Podcast User Notes",
+                            format_prompt_code_block(detection_notes),
+                        )
                     if episode_description:
-                        kc_desc += f"Episode Description:\n{episode_description}\n"
+                        kc_desc += format_prompt_section(
+                            "Episode Description",
+                            format_prompt_code_block(episode_description),
+                        )
                     kc_live = live_route_params('detection')
                     inverted = self._detect_keep_content_ads(
                         segments, model=model, slug=slug, episode_id=episode_id,
@@ -3561,9 +3602,6 @@ class AdDetector:
                        f"for {total_duration/60:.1f}min processed audio")
 
             system_prompt = self.get_verification_prompt()
-            if addressing_mode == 'segment_ids':
-                system_prompt = f"{system_prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-            system_prompt = f"{system_prompt}{AD_QUOTE_ANCHOR_SECTION}"
             log_assembled_system_prompt(slug, episode_id, system_prompt,
                                         label="Verification system")
             model = self.get_verification_model()
@@ -3576,22 +3614,33 @@ class AdDetector:
                 pass1_cuts or [], episode_description)
 
             # Prepare description section
+            # Don't worry about having too many empty lines -- they will be
+            # collapsed before sending to LLM.
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section = f"Podcast Description:\n{podcast_description}\n\n"
-            description_section += format_detection_notes_block(detection_notes)
+                description_section += format_prompt_section(
+                    "Podcast Description",
+                    format_prompt_code_block(podcast_description)
+                )
+
+            detection_notes = detection_notes.strip() if detection_notes else ""
+            if detection_notes:
+                description_section += format_prompt_section(
+                    "Podcast User Notes",
+                    format_prompt_code_block(detection_notes),
+                )
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += (
-                    f"Episode Description (this describes the actual content topics discussed; "
-                    f"it may also list episode sponsors):\n{episode_description}\n"
+                description_section += format_prompt_section(
+                    "Episode Description (may list sponsors)",
+                    format_prompt_code_block(episode_description)
                 )
 
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:
-                description_section += sponsor_history
+                description_section += sponsor_history + "\n\n"
 
             # Category actions must enter at the earliest merge seam. The default
             # verification prompt requires a category; non-default actions enable the

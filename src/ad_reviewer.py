@@ -71,7 +71,8 @@ from utils.markers import (
 )
 from utils.prompt import (
     format_sponsor_block, render_prompt, apply_override, seed_sponsors_enabled,
-    format_detection_notes_block, scrub_description, strip_comments_from_prompt
+    scrub_description, strip_comments_from_prompt,
+    format_prompt_code_block,
 )
 from utils.text import (
     BOUNDARY_SNAP_TOLERANCE_S,
@@ -97,15 +98,16 @@ AD_REVIEW_JSON_SCHEMA = {
                     "is_ad": {"type": "boolean"},
                     "start": {"type": "number"},
                     "end": {"type": "number"},
-                    "confidence": {"type": "number"},
-                    "reason": {"type": "string"},
+                    "confidence": {"type": ["number", "null"]}, # null when !is_ad
+                    "reason": {"type": ["string", "null"]}, # null when !is_ad
                 },
-                # An explicit reject carries only these two.
-                "required": ["is_ad", "reason"],
+                "required": ["is_ad", "start", "end", "confidence", "reason"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["ads"],
+    "additionalProperties": False,
 }
 
 logger = logging.getLogger(__name__)
@@ -351,6 +353,7 @@ TRIM_RECOVERY_JSON_SCHEMA = {
         "ad_end": {"type": ["number", "null"]},
     },
     "required": ["ad_start", "ad_end"],
+    "additionalProperties": False,
 }
 
 
@@ -2338,14 +2341,13 @@ class AdReviewer:
             except Exception as e:
                 logger.warning(f"sponsor history provider failed: {e}")
 
-        notes_block = format_detection_notes_block(episode_meta.get("detection_notes"))
-        description_section = notes_block
-        if podcast_description or episode_description:
-            description_section = (
-                f"Podcast description: {podcast_description}\n"
-                f"{notes_block}"
-                f"Episode description: {episode_description}\n"
-            )
+        description_section = ''
+        if podcast_description:
+            description_section += f"Podcast Description:\n{format_prompt_code_block(podcast_description)}\n"
+        if (detection_notes := episode_meta.get("detection_notes")):
+            description_section += f"Podcast User Notes:\n{format_prompt_code_block(detection_notes)}\n"
+        if episode_description:
+            description_section += f"Episode Description:\n{format_prompt_code_block(episode_description)}\n"
 
         if pool == "resurrection":
             framing = (

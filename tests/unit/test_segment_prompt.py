@@ -1,22 +1,26 @@
 """Segment category emission in the detection prompt (#565).
-
-SHOW_SEGMENTS_PROMPT_SECTION is opt-in per podcast (detect_show_segments); merge-seam category
-normalization always runs.
 """
 import json
 import logging
 from unittest.mock import patch, MagicMock
 
+from database import VERIFICATION_PROMPT_EXAMPLES
 from tests.app_bootstrap import bootstrap
 
 bootstrap('segment_prompt_test_')
 
 from ad_detector import AddressingStats, AdDetector, WindowResult
-from config import SEGMENT_CATEGORIES, DEFAULT_SEGMENT_ACTION, normalize_segment_category
-from utils.constants import DEFAULT_SYSTEM_PROMPT, SHOW_SEGMENTS_PROMPT_SECTION
+from config import (
+    SEGMENT_CATEGORIES, DEFAULT_SEGMENT_ACTION, normalize_segment_category,
+    ALL_CATEGORIES, MAIN_CONTENT_CATEGORY,
+)
+from utils.constants import (
+    DETECTION_PROMPT_EXAMPLES, DETECTION_PROMPT_OUTPUT_FORMAT,
+    DETECTION_PROMPT_SPONSOR_WATCHLISTS,
+)
 from ad_detector.prompts import (
-    parse_ads_from_response, parse_category_repair_response,
-    format_category_repair_prompt,
+    get_static_system_prompt, get_static_verification_prompt, parse_ads_from_response,
+    parse_category_repair_response, format_category_repair_prompt,
 )
 from llm_client import LLMClient, LLMResponse
 
@@ -61,8 +65,31 @@ def _detector(detect_show_segments=False, system_prompt=None):
 
 
 class TestDefaultPromptCategoryInstructions:
-    def test_category_field_required_in_output_format(self):
-        assert '"category"' in DEFAULT_SYSTEM_PROMPT
+    def test_prompt_contains_required_sections(self):
+        prompt = get_static_system_prompt()
+        assert DETECTION_PROMPT_OUTPUT_FORMAT in prompt
+        assert DETECTION_PROMPT_EXAMPLES in prompt
+        assert DETECTION_PROMPT_SPONSOR_WATCHLISTS in prompt
+
+    def test_verification_prompt_contains_required_sections(self):
+        prompt = get_static_verification_prompt()
+        assert DETECTION_PROMPT_OUTPUT_FORMAT in prompt
+        assert VERIFICATION_PROMPT_EXAMPLES in prompt
+        assert DETECTION_PROMPT_SPONSOR_WATCHLISTS not in prompt
+
+    def test_all_segment_categories_in_output_format(self):
+        cat_def = [
+            line for line in DETECTION_PROMPT_OUTPUT_FORMAT.splitlines()
+            if '"category": "' in line
+        ]
+        assert len(cat_def) == 1
+        for cat in ALL_CATEGORIES:
+            if cat == MAIN_CONTENT_CATEGORY:
+                # 'main_content' is excluded from the prompt's list of allowed
+                # categories since we discourage the LLM from returning these segments
+                assert cat not in cat_def[0]
+            else:
+                assert cat in cat_def[0]
 
 
 def test_verification_wires_category_actions_into_repair_and_dedup():
@@ -84,46 +111,6 @@ def test_verification_wires_category_actions_into_repair_and_dedup():
     kwargs = run_pass.call_args.kwargs
     assert kwargs['action_map'] == action_map
     assert kwargs['category_repair_enabled'] is True
-
-
-class TestShowSegmentsSection:
-    def test_section_defines_intro_outro_recap(self):
-        for cat in ('intro', 'outro', 'recap'):
-            assert cat in SHOW_SEGMENTS_PROMPT_SECTION
-
-
-class TestPromptComposition:
-    def test_section_appended_when_flag_on(self):
-        det = _detector(detect_show_segments=True)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert SHOW_SEGMENTS_PROMPT_SECTION in prompt
-
-    def test_section_absent_when_flag_off(self):
-        det = _detector(detect_show_segments=False)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert SHOW_SEGMENTS_PROMPT_SECTION not in prompt
-
-    def test_section_absent_when_no_podcast_row(self):
-        det = _detector(detect_show_segments=True)
-        # slug=None -> get_podcast_row short-circuits to no row.
-        prompt = det._build_detection_system_prompt(None)
-        assert SHOW_SEGMENTS_PROMPT_SECTION not in prompt
-
-    def test_section_rides_along_on_operator_override(self):
-        # Section is appended after override resolution, so an opted-in
-        # feed still gets it even though it is nowhere in their override.
-        override = "Custom instructions with no category talk at all."
-        det = _detector(detect_show_segments=True, system_prompt=override)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert override in prompt
-        assert SHOW_SEGMENTS_PROMPT_SECTION in prompt
-
-    def test_flag_off_leaves_operator_override_untouched_by_section(self):
-        override = "Custom instructions with no category talk at all."
-        det = _detector(detect_show_segments=False, system_prompt=override)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert override in prompt
-        assert SHOW_SEGMENTS_PROMPT_SECTION not in prompt
 
 
 class TestParsedCategorySurvivesMergeSeam:
@@ -330,7 +317,7 @@ class TestCategoryRepairPromptAndParsing:
             {"segment_id": 0, "start_s": 10.0, "end_s": 40.0, "end_text": "x", "reason": "test ad"},
             {"segment_id": 2, "start_s": 90.0, "end_s": 95.0, "end_text": "x", "reason": "test ad"}
         ]
-        assert "outro: the show's closing credits" in system
+        assert "- `outro`: Explicit episode wrap-up" in system
         assert "<!--" not in system
         assert f'\n```transcript-with-timestamps\n{fake_transcript}\n```' in prompt
         assert f'\n```json\n{json.dumps(expected_segments)}\n```' in prompt
@@ -342,12 +329,6 @@ class TestCategoryRepairPromptAndParsing:
                     {"segment_id": 1, "start_s": 1.0, "end_s": 2.0}]
         assert f'```json\n{json.dumps(expected)}\n```' in prompt
         assert '@{' not in prompt
-
-    def test_system_prompt_output_example_is_plain_json(self):
-        (system, _) = format_category_repair_prompt('t', [])
-        assert '//' not in system
-        example = system[system.index('{\n  "categories"'):system.rindex('}') + 1]
-        assert json.loads(example)['categories'][0]['segment_id'] == 0
 
     def test_parse_bare_array_shape(self):
         resolved = parse_category_repair_response(

@@ -16,10 +16,13 @@ from datetime import timedelta
 from pathlib import Path
 
 from community_export import count_brand_occurrences, get_sponsor_row_or_stub, normalize_aliases
-from config import SEGMENT_CATEGORIES
+from config import ALL_CATEGORIES, SEGMENT_CATEGORIES
 from rapidfuzz import fuzz
 
-from database import Database
+from database import (
+    DEFAULT_PATTERN_CLEANUP_PROMPT, PATTERN_CLEANUP_PROMPT_OUTPUT_FORMAT,
+    Database,
+)
 from database.pattern_cleanup import CLEANUP_STATS_KINDS
 from database.settings import registry_default, registry_get_default
 from llm_client import (
@@ -46,6 +49,10 @@ from utils.llm_call import call_llm, schema_format_for
 from utils.llm_response import extract_json_object
 from utils.pattern_catalog import invalidate_pattern_catalog_scope
 from utils.pattern_similarity import canonicalize_for_dedupe, similarity
+from utils.prompt import (
+    finalize_prompt, format_prompt_code_block, render_prompt,
+    strip_comments_from_prompt,
+)
 from utils.time import parse_iso_utc, utc_now, utc_now_iso
 
 logger = logging.getLogger('podcast.pattern_cleanup')
@@ -96,24 +103,27 @@ REVIEW_SCHEMA = {
         "action": {"type": "string", "enum": ["keep", "trim", "split", "rename"]},
         "text": {"type": ["string", "null"]},
         "sponsor": {"type": ["string", "null"]},
-        "category": {"type": ["string", "null"], "enum": [*SEGMENT_CATEGORIES, None]},
+        "category": {"type": ["string", "null"], "enum": list(ALL_CATEGORIES)},
         "pieces": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"}, "sponsor": {"type": "string"},
-                    "category": {"type": ["string", "null"], "enum": [*SEGMENT_CATEGORIES, None]},
+                    "category": {"type": ["string", "null"], "enum": list(ALL_CATEGORIES)},
                 },
                 "required": ["text", "sponsor"],
+                "additionalProperties": False
             },
         },
         "contaminated": {"type": "boolean"},
-        "contamination_reason": {"type": ["string", "null"]},
+        "contamination_reason": {"type": ["string", "null"], "maxLength": MAX_REASON_CHARS},
         "confidence": {"type": "number"},
-        "reasons": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string", "maxLength": MAX_REASON_CHARS},
     },
-    "required": ["action", "confidence"],
+    "required": ["action", "text", "sponsor", "category", "pieces", 
+                 "contaminated", "contamination_reason", "confidence", "reason"],
+    "additionalProperties": False,
 }
 
 
@@ -147,7 +157,17 @@ def _clamped_int(db, key: str, bounds: tuple[int, int]) -> int:
 
 
 def _system_prompt(db) -> str:
-    return db.get_setting('pattern_cleanup_prompt') or registry_default('pattern_cleanup_prompt')
+    prompt = (
+        db.get_setting('pattern_cleanup_prompt')
+        or registry_default('pattern_cleanup_prompt')
+        or DEFAULT_PATTERN_CLEANUP_PROMPT
+    )
+    prompt = render_prompt(
+        strip_comments_from_prompt(prompt), 
+        output_format=strip_comments_from_prompt(PATTERN_CLEANUP_PROMPT_OUTPUT_FORMAT),
+        examples='', # no examples provided for now
+    )
+    return finalize_prompt(prompt)
 
 
 def _decode_list(value) -> list:
@@ -500,13 +520,20 @@ def validate_review(pattern: dict, raw: dict, sponsors=None) -> dict | None:
         logger.info("pattern_cleanup: pattern %s review dropped at confidence %.2f", pid, confidence)
         return None
     contaminated = raw.get('contaminated') is True
-    raw_reasons = raw.get('reasons') if isinstance(raw.get('reasons'), list) else []
+    raw_reasons = raw.get('reasons', raw.get('reason'))
+    if not isinstance(raw_reasons, list):
+        raw_reasons = [raw_reasons] if raw_reasons else []
     reasons = [r for r in map(_short, raw_reasons) if r][:MAX_REASONS]
     verdict = {
-        'action': 'keep', 'text': None, 'sponsor': None, 'category': None, 'pieces': [],
+        'action': 'keep',
+        'text': None,
+        'sponsor': None,
+        'category': None,
+        'pieces': [],
         'contaminated': contaminated,
         'contamination_reason': _short(raw.get('contamination_reason')) if contaminated else None,
-        'confidence': round(confidence, 3), 'reasons': reasons,
+        'confidence': round(confidence, 3),
+        'reasons': reasons,
     }
     proposed_category = raw.get('category')
     if proposed_category is not None:
@@ -565,12 +592,30 @@ def validate_review(pattern: dict, raw: dict, sponsors=None) -> dict | None:
 
 
 def _user_prompt(pattern: dict, context: str | None) -> str:
-    body = (f"Sponsor on record: {pattern.get('sponsor') or 'unknown'}\n"
-            f"Category on record: {pattern.get('category') or 'uncategorized'}\n\n"
-            f"Pattern text:\n<<<\n{pattern.get('text_template') or ''}\n>>>\n\n")
     if context:
-        return body + f"Transcript context:\n<<<\n{context}\n>>>"
-    return body + "No transcript context is available; judge from the pattern text alone."
+        context = (
+            "\n"
+            "The following text provides up to 45s of leading and trailing context. "
+            "The target segment is bounded by `[[` and `]]`.\n"
+            "\n"
+            "> **Important:** Use this context ONLY to understand where the segment "
+            "fits in the flow of the conversation; DO NOT use the text for trimming "
+            "or splitting purposes.\n"
+            "\n"
+            f"{format_prompt_code_block(context)}"
+        )
+    else:
+        context = "not available"
+
+    prompt = (
+        "Review the following segment and provide your verdict.\n"
+        "\n"
+        f"**Category on record**: {pattern.get('category') or 'uncategorized'}\n"
+        f"**Sponsor on record**: {pattern.get('sponsor') or 'null'}\n"
+        f"**Pattern text**:\n{format_prompt_code_block(pattern.get('text_template') or '')}"
+        f"**Transcript Context**: {context}"
+    )
+    return finalize_prompt(prompt)
 
 
 def review_pattern(pattern: dict, context: str | None, *, live: LiveRoute,

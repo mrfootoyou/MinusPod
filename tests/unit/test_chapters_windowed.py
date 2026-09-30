@@ -4,6 +4,7 @@ clustered boundaries, so detection runs a window at a time."""
 from types import SimpleNamespace
 
 from tests.app_bootstrap import bootstrap, ensure_model_configured
+from utils.prompt import OVERRIDE_HEADER
 
 _test_data_dir = bootstrap('chapters_windowed_test_')
 
@@ -310,7 +311,7 @@ class TestChapterPromptSetting:
             'chapter_prompt_override', 'Prefer interview boundaries.',
             is_default=False)
         assert _capture_prompt().endswith(
-            'ADDITIONAL INSTRUCTIONS (these take precedence):\n'
+            f'{OVERRIDE_HEADER}'
             'Prefer interview boundaries.')
 
     def test_default_render_matches_the_old_fstring(self):

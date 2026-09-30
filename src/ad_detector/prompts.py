@@ -10,18 +10,23 @@ import re
 from collections import Counter
 from typing import NamedTuple
 
+from database import DEFAULT_VERIFICATION_PROMPT, VERIFICATION_PROMPT_EXAMPLES
 from sponsor_context import (SPONSOR_MIN_MENTIONS, framed_sponsor_names, registry_sponsor,
                              text_has_commercial_context)
 from sponsor_service import SponsorService
 from text_pattern_matcher import bounded_segment_texts
 from utils.prompt import (
-    finalize_prompt, format_prompt_code_block,
-    format_sponsor_block, render_prompt, strip_comments_from_prompt
+    finalize_prompt, format_prompt_code_block, format_prompt_heading, format_prompt_list,
+    format_prompt_section, format_sponsor_block, render_prompt,
+    strip_comments_from_prompt
 )
 from utils.text import truncate
 from utils.time import parse_timestamp
 from utils.llm_response import extract_json_ads_array
 from utils.constants import (
+    DEFAULT_SYSTEM_PROMPT, DETECTION_PROMPT_SPONSOR_WATCHLISTS,
+    DETECTION_PROMPT_OUTPUT_FORMAT, DETECTION_PROMPT_EXAMPLES,
+    SEED_SPONSORS,
     AUDIO_ECHO_RE, INVALID_SPONSOR_VALUES, STRUCTURAL_FIELDS,
     SPONSOR_PRIORITY_FIELDS, SPONSOR_PATTERN_KEYWORDS,
     SPONSOR_MAX_NAME_CHARS, REASON_DESCRIPTION_MAX,
@@ -32,9 +37,9 @@ from utils.constants import (
     squash_brand,
 )
 from config import (
-    LOW_CONFIDENCE, CONFIDENCE_STRING_MAP,
+    ALL_CATEGORIES, IGNORED_CATEGORIES, LOW_CONFIDENCE, CONFIDENCE_STRING_MAP,
     CONTENT_DURATION_THRESHOLD, LOW_EVIDENCE_WARN_THRESHOLD,
-    get_stage_tunable, SEGMENT_CATEGORIES, repair_segment_category,
+    get_stage_tunable, repair_segment_category,
 )
 
 logger = logging.getLogger('podcast.claude')
@@ -58,11 +63,17 @@ _SPONSOR_FIELD_STEMS = frozenset(_singular(f) for f in SPONSOR_PRIORITY_FIELDS)
 
 
 # User prompt template (not configurable via UI - just formats the transcript)
-# Description is optional - may contain sponsor lists, chapter markers, or content context
-USER_PROMPT_TEMPLATE = """Podcast: {podcast_name}
-Episode: {episode_title}
-{description_section}
-{transcript}"""
+USER_PROMPT_TEMPLATE = """
+Please segment this podcast transcript.
+
+{metadata}
+
+{window_context}
+
+{transcript}
+
+{audio_context}
+"""
 
 def create_windows(segments: list[dict], window_size: float = None,
                    overlap: float = None) -> list[dict]:
@@ -128,6 +139,48 @@ def create_windows(segments: list[dict], window_size: float = None,
     return windows
 
 
+def _build_window_context(
+    window_index: int,
+    total_windows: int,
+    window_start: float,
+    window_end: float,
+) -> str:
+    """Builds the window context prompt for a partial transcript.
+    Returns:
+        A string containing the window context instructions for the partial
+        transcript or an empty string if there is only a single window (i.e.,
+        not partial).
+    """
+    if (total_windows <= 1): 
+        return "" # No context needed for a single window
+
+    window_context = []
+    window_context.append(
+        f"This is a partial transcript (window {window_index + 1} of "
+        f"{total_windows}) with hard cuts at {window_start:.1f}s "
+        f"thru {window_end:.1f}s.\n"
+    )
+    if (window_index > 0 and window_index + 1 < total_windows):
+        # save a few tokens by combining the two instructions
+        window_context.append(
+            "If the first or last segment appears to begin or end outside this "
+            "window, append \"continues from previous\" or \"continues in next\" "
+            "to the `reason` field.\n"
+        )
+    elif (window_index > 0):
+        window_context.append(
+            "If the first segment appears to begin outside this window, append "
+            "\"continues from previous\" to the `reason` field.\n"
+        )
+    elif (window_index + 1 < total_windows):
+        window_context.append(
+            "If the last segment appears to end outside this window, append "
+            "\"continues in next\" to the `reason` field.\n"
+        )
+
+    return format_prompt_list(window_context)
+
+
 def format_window_prompt(
     podcast_name: str,
     episode_title: str,
@@ -145,38 +198,62 @@ def format_window_prompt(
     `description_section` and `audio_context` are pre-built strings so the
     benchmark can call this without DB or audio-analysis state.
 
-    `addressing_mode` selects the window-context rules appended after the
-    header: 'timestamps' (default) emits the original three bullets telling the
-    model to use absolute timestamps; 'segment_ids' emits
-    SEGMENT_ID_WINDOW_RULES instead, never both, so the prompt never tells the
-    model to use and not use timestamps in one message. Callers that never pass
-    it (benchmark, keep-content windows) get 'timestamps'.
-    """
-    if addressing_mode == "segment_ids":
-        transcript = "Transcript (with [{id}] prefix):\n"
-    else:
-        transcript = "Transcript (with [{start}-{end}] timestamp, in seconds):\n"
-    transcript += "\n".join(transcript_lines)
+    `description_section` in inserted between the episode title and window
+    context (before the transcript) and may contain any or all of the
+    following preformatted sections:
+      - Podcast description
+      - Podcast user notes
+      - Episode description
+      - Sponsor history
+      - Learned ad-break hints
 
-    header = (
-        f"\n\n=== WINDOW {window_index + 1}/{total_windows}: "
-        f"{window_start/60:.1f}-{window_end/60:.1f} minutes ==="
+    `audio_context` is inserted after the transcript and may contain any or all
+    of the following preformatted sections:
+      - Audio analysis signals
+      - Recurring segment hints
+    """
+    metadata = format_prompt_heading(
+        "Episode Metadata",
+        2,
+        (f"{format_prompt_section("Podcast Name", 
+                                  re.sub(r"(?:\r?\n)+", ", ", podcast_name),
+                                  one_line=True)}"
+         f"{format_prompt_section("Episode Title",
+                                  re.sub(r"(?:\r?\n)+", ", ", episode_title),
+                                  one_line=True)}"
+         f"{description_section}")
     )
-    if addressing_mode == "segment_ids":
-        rules = SEGMENT_ID_WINDOW_RULES
-    else:
-        rules = (
-            "\n- Use absolute timestamps from transcript (as shown in brackets)"
-            "\n- If an ad starts before this window, use the first timestamp with note \"continues from previous\""
-            f"\n- If an ad extends past this window, use {window_end:.1f} with note \"continues in next\"\n"
+
+    window_context = _build_window_context(
+        window_index=window_index,
+        total_windows=total_windows,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    if window_context:
+        window_context = format_prompt_heading(
+            "Transcript Context",
+            2,
+            window_context
         )
-    window_context = header + rules
-    return strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
-        podcast_name=podcast_name,
-        episode_title=episode_title,
-        description_section=description_section,
-        transcript=transcript,
-    ) + audio_context + window_context
+
+    transcript = format_prompt_heading(
+        "Transcript", 
+        2,
+        format_prompt_code_block(
+            "\n".join(transcript_lines),
+            language="transcript-with-timestamps" if addressing_mode == "timestamps" else "transcript-with-indexes",
+        )
+    )
+
+    return finalize_prompt(
+        strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
+            metadata=metadata.strip(),
+            window_context=window_context.strip(),
+            transcript=transcript.strip(),
+            audio_context=audio_context.strip(),
+        )
+    )
 
 
 SEGMENT_ID_SYSTEM_SECTION = """
@@ -220,12 +297,30 @@ def get_static_system_prompt() -> str:
     offline LLM benchmark; production reads stored prompts and merges DB-derived
     sponsors via ``AdDetector.get_system_prompt`` instead.
     """
-    from utils.constants import DEFAULT_SYSTEM_PROMPT
-    from utils.constants import SEED_SPONSORS
     sponsor_list = ', '.join(s['name'] for s in SEED_SPONSORS)
     return render_prompt(
         strip_comments_from_prompt(DEFAULT_SYSTEM_PROMPT),
         sponsor_database=format_sponsor_block(sponsor_list),
+        sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+        output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+        examples=strip_comments_from_prompt(DETECTION_PROMPT_EXAMPLES),
+    )
+
+
+def get_static_verification_prompt() -> str:
+    """Return DEFAULT_VERIFICATION_PROMPT with the static SEED_SPONSORS list substituted.
+
+    Reproducible from source: no DB, env, or wallclock dependency. Used by the
+    offline LLM benchmark; production reads stored prompts and merges DB-derived
+    sponsors via ``AdDetector.get_system_prompt`` instead.
+    """
+    sponsor_list = ', '.join(s['name'] for s in SEED_SPONSORS)
+    return render_prompt(
+        strip_comments_from_prompt(DEFAULT_VERIFICATION_PROMPT),
+        sponsor_database=format_sponsor_block(sponsor_list),
+        sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+        output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+        examples=strip_comments_from_prompt(VERIFICATION_PROMPT_EXAMPLES),
     )
 
 
@@ -457,6 +552,13 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
                     f"{start:.1f}s-{end:.1f}s (classification={classification})")
         return None
 
+    # Filter out explicitly ignored categories
+    raw_category = _get_category(ad)
+    if raw_category and raw_category.lower() in IGNORED_CATEGORIES:
+        logger.info(f"[{slug}:{episode_id}] Ignoring segment: "
+                    f"{start:.1f}s-{end:.1f}s (category={raw_category})")
+        return None
+
     # Extract sponsor/advertiser name using priority fields + pattern matching
     # Try extract_sponsor_name first for a real sponsor name.
     # If it returns the default, fall back to Claude's raw reason.
@@ -582,7 +684,7 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
         ad_entry['sponsor'] = sponsor_name
     # Pass the LLM's raw category through unvalidated; the
     # merge seam normalizes it against SEGMENT_CATEGORIES.
-    resolved_category = resolve_ad_category(ad)
+    resolved_category = _repair_category(raw_category)
     if resolved_category:
         ad_entry['category'] = resolved_category
     # Only the literal true counts; the detector decides whether the feed keeps it.
@@ -685,7 +787,7 @@ def _int_field(obj: dict, keys: tuple[str, ...]):
     for key in keys:
         if key in obj:
             try:
-                return int(obj[key])
+                return int(float(obj[key]))
             except (TypeError, ValueError):
                 return None
     return None
@@ -720,8 +822,8 @@ def parse_id_ads_from_response(response_text: str, slug: str = None,
     for obj in raw:
         if not isinstance(obj, dict):
             continue
-        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id'))
-        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id'))
+        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id', 'start'))
+        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id', 'end'))
         if sid_lo is None or sid_hi is None:
             skipped_no_id += 1
             continue
@@ -801,22 +903,26 @@ You will be provided a transcript excerpt and a list of segments contained withi
 
 ### Categories
 <!-- These should match the categories definitions in the DETECTION prompt -->
-- sponsor: a paid host read, a produced ad spot, a dynamically inserted ad (DAI), or a platform-inserted ad
-- cross_promo: a produced segment promoting a different show, inserted by the platform or network
-- self_promo: a produced or inserted segment where the show promotes its own other content (another show, Patreon, merch, mailing list)
-- interaction: a produced or inserted segment asking listeners to subscribe, rate, review, or follow the show
-- intro: the show's opening theme music and/or host introduction
-- outro: the show's closing credits, sign-off, or theme music
-- recap: a produced "coming up" preview, headline bumper, or "listen to this next" segment
+<!-- Removed IGNORED_CATEGORIES except for `main_content` -->
+- `main_content`: Substantive episode material (stories, reporting, interviews, discussions, Q&A, cold opens, current-episode summaries, guest introductions and bios).
+- `intro`: Non-substantive opening material (theme music, show ID, boilerplate host intro, opening previews). May follow a cold open. Ends when substantive discussion or guest introduction begins.
+- `outro`: Explicit episode wrap-up following substantive discussion (sign-off, credits, closing theme, network tagline). Post-credit discussions remain `main_content`.
+- `interaction`: Direct calls for audience participation (reviews, comments, question submissions). Merely addressing listeners does not qualify.
+- `recap`: Summary of prior episodes ("previously on"). Current-episode summaries remain `main_content`.
+- `sponsor`: Sustained promotion for an outside commercial brand, product, service, or PSA.
+- `cross_promo`: Sustained promotion for a sibling show, channel, event, or network bundle.
+- `self_promo`: Sustained promotion for the current show, host, memberships, merchandise, or show channels.
+
+**Default to retention (`main_content`)**: When in doubt, classify as `main_content`. Mark non-main content only if listeners can safely discard it without losing context, essential information, or conversational flow. Passing brand mentions, neutral commentary, and guest plugs remain `main_content`.
 
 ## Output Format
-Return ONLY a valid, compact JSON object with no Markdown wrappers or commentary. "categories" holds one entry per provided segment, "segment_id" is the id of the provided segment, and "category" is its best-fit category:
+Return ONLY a valid, compact JSON object with no Markdown wrappers or commentary:
 
 {
-  "categories": [
+  "categories": [ // Array of categorized segments, one per given segment
     {
-      "segment_id": 0,
-      "category": "sponsor"
+      "segment_id": 0, // The id of the given segment
+      "category": "sponsor" // The best-fit category for the segment
     }
   ]
 }
@@ -842,13 +948,15 @@ CATEGORY_REPAIR_JSON_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "segment_id": {"type": "integer"},
-                    "category": {"type": "string", "enum": list(SEGMENT_CATEGORIES)},
+                    "category": {"type": "string", "enum": list(ALL_CATEGORIES)},
                 },
                 "required": ["segment_id", "category"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["categories"],
+    "additionalProperties": False,
 }
 
 # Detection-window schema (#694). Wrapped under "ads" because a json_schema
@@ -874,89 +982,49 @@ SPONSOR_ALIAS_FIELD_DESCRIPTION = (
     "Fill at most one of the sponsor fields; omit them all otherwise."
 )
 
+# Cap on the schema's free-text fields. An enforcing decoder cannot otherwise
+# stop a model that starts repeating itself inside a string: gemma4 on Ollama
+# looped a sponsor alias until max_tokens and the window's JSON never closed.
+AD_SCHEMA_TEXT_MAX_CHARS = 300
+
 AD_DETECTION_JSON_SCHEMA = {
     "type": "object",
     "properties": {
-        "ads": {
+        "segments": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "start": {"type": "number"},
                     "end": {"type": "number"},
-                    "start_id": {"type": "integer"},
-                    "end_id": {"type": "integer"},
-                    "start_text": {"type": "string"},
-                    # The prompt requires end_text on every segment and the
-                    # sponsor extractors read these names; a schema-enforcing
-                    # decoder would silently strip anything absent here.
-                    "end_text": {"type": "string"},
-                    # Same enum as the repair schema above: an enforcing
-                    # decoder cannot emit a synonym the repair map translates.
-                    "category": {"type": "string", "enum": list(SEGMENT_CATEGORIES)},
+                    "start_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
+                    "end_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
+                    "category": { "type": "string", "enum": list(ALL_CATEGORIES)},
+                    "reason": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
+                    "sponsor_name": {"type": ["string", "null"], "maxLength": SPONSOR_MAX_NAME_CHARS},
                     "confidence": {"type": "number"},
-                    "reason": {"type": "string"},
-                    "note": {"type": "string"},
-                    # Described on the extractor's first-choice field only:
-                    # the model follows the schema here, so repeating it on all
-                    # seven adds tokens and invites the multi-fill it warns off.
-                    **{name: ({"type": "string",
-                               "description": SPONSOR_ALIAS_FIELD_DESCRIPTION}
-                              if name == SPONSOR_PRIORITY_FIELDS[0]
-                              else {"type": "string"})
-                       for name in SPONSOR_PRIORITY_FIELDS},
                 },
+                "required": ["start", "end", "start_text", "end_text", "category", "reason", "sponsor_name", "confidence"],
+                "additionalProperties": False,
             },
         },
     },
-    "required": ["ads"],
+    "required": ["segments"],
+    "additionalProperties": False,
 }
 
-# Cap on the schema's free-text fields. An enforcing decoder cannot otherwise
-# stop a model that starts repeating itself inside a string: gemma4 on Ollama
-# looped a sponsor alias until max_tokens and the window's JSON never closed.
-AD_SCHEMA_TEXT_MAX_CHARS = 300
 
-
-def _mode_detection_schema(addressing_mode: str) -> dict:
-    """The detection schema for one addressing mode, for enforcing decoders.
-
-    An enforcing decoder such as Ollama's ``format`` emits an optional field only
-    when the model picks it, and gemma4 picked sponsor aliases over category,
-    reason and end_text, so the validator rejected real ads. This marks the
-    fields the prompt requires as required for ``addressing_mode`` and caps free
-    text; AD_DETECTION_JSON_SCHEMA itself stays all-optional.
-    """
+def _short_ask_detection_schema() -> dict:
     schema = copy.deepcopy(AD_DETECTION_JSON_SCHEMA)
-    item = schema["properties"]["ads"]["items"]
-    for name, spec in item["properties"].items():
-        if spec["type"] == "string" and "enum" not in spec:
-            spec["maxLength"] = (SPONSOR_MAX_NAME_CHARS if name in SPONSOR_PRIORITY_FIELDS
-                                 else AD_SCHEMA_TEXT_MAX_CHARS)
-    edges = (["start_id", "end_id"] if addressing_mode == "segment_ids"
-             else ["start", "end"])
-    item["required"] = edges + ["start_text", "end_text", "category", "confidence", "reason"]
+    schema["properties"]["segments"]["items"]["properties"]["short_ask"] = {"type": "boolean"}
     return schema
-
-
-# Built once; callers pass these through unchanged, like AD_DETECTION_JSON_SCHEMA.
-_MODE_DETECTION_SCHEMAS = {mode: _mode_detection_schema(mode) for mode in ("timestamps", "segment_ids")}
-
-
-def _short_ask_detection_schema(addressing_mode: str) -> dict:
-    schema = copy.deepcopy(_mode_detection_schema(addressing_mode))
-    schema["properties"]["ads"]["items"]["properties"]["short_ask"] = {"type": "boolean"}
-    return schema
-
-
-_SHORT_ASK_DETECTION_SCHEMAS = {mode: _short_ask_detection_schema(mode)
-                                for mode in ("timestamps", "segment_ids")}
 
 
 def ad_detection_json_schema(addressing_mode: str, short_ask: bool = False) -> dict:
     """Per-mode detection schema; short_ask adds the optional flag for feeds that opted in."""
-    schemas = _SHORT_ASK_DETECTION_SCHEMAS if short_ask else _MODE_DETECTION_SCHEMAS
-    return schemas["segment_ids" if addressing_mode == "segment_ids" else "timestamps"]
+    if short_ask:
+        return _short_ask_detection_schema()
+    return AD_DETECTION_JSON_SCHEMA
 
 
 # Small fixed budget: the repair call only ever emits a short JSON array,
@@ -1022,25 +1090,33 @@ _CATEGORY_KEY_HINTS = ('categor', 'segment_type', 'classification', 'type')
 _repair_category = repair_segment_category
 
 
-def resolve_ad_category(ad: dict):
+def resolve_ad_category(ad: dict) -> str|None:
     """The segment category an ad object carries, wherever it put it.
 
     "category" first, then other keys a model uses for the same idea. The value
     is validated against the vocabulary either way, so a `type` of "ad" or
     "advertisement" contributes nothing while "self_promo" is taken at face value.
     """
+    return _repair_category(_get_category(ad))
+
+def _get_category(ad: dict) -> str|None:
+    """The segment category an ad object carries, wherever it put it.
+
+    "category" first, then the other keys a model uses for the same idea.
+    """
     if not isinstance(ad, dict):
         return None
-    direct = _repair_category(ad.get('category'))
-    if direct:
-        return direct
+    category = ad.get('category')
+    if category is not None:
+        return str(category)
     for key, value in ad.items():
         kl = str(key).lower()
         if kl == 'category' or not any(h in kl for h in _CATEGORY_KEY_HINTS):
             continue
-        found = _repair_category(value)
-        if found:
-            return found
+        # only use if it hints at a valid category
+        value = str(value) if value is not None else None
+        if value and _repair_category(value):
+            return value
     return None
 
 

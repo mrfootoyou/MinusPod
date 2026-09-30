@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config import AD_CATEGORIES
 from utils.time import utc_now_iso
 from utils.prompt import scrub_description
 
@@ -307,6 +308,12 @@ async def run(
                     parsed_ads, extraction_method, id_contract_miss = _parse_id_response(response_text, id_segments)
                 else:
                     parsed_ads, extraction_method = _parse_response(response_text)
+
+                # drop non-promotional segments. Our revised prompt asks for
+                # all non-main_content segments, but the benchmark doesn't know
+                # that and will count them as false positives.
+                parsed_ads = [ad for ad in parsed_ads if ad.get('category') in AD_CATEGORIES]
+
                 comp = compliance_score(extraction_method)
                 cost_lookup = pricing_snapshot.lookup(unit.model_id)
                 if cost_lookup is not None and native_accounting is None:

@@ -8,7 +8,9 @@ import re
 from config import DETECTION_NOTES_MAX_CHARS, coerce_bool_setting
 
 SPONSOR_DATABASE_HEADER = (
-    "\n\nDYNAMIC SPONSOR DATABASE (current known sponsors - treat as high confidence):\n"
+    "## Recent sponsors\n"
+    "\n"
+    "Segments referencing these names are likely to be sponsored segments:\n"
 )
 
 
@@ -41,6 +43,7 @@ def format_sponsor_block(sponsor_list: str) -> str:
 
     An empty list returns "" so no dangling header is left behind.
     """
+    sponsor_list = sponsor_list.strip() if sponsor_list else ""
     if not sponsor_list:
         return ""
     return SPONSOR_DATABASE_HEADER + sponsor_list
@@ -59,7 +62,7 @@ def seed_sponsors_enabled(db, toggle_key: str, log) -> bool:
     return coerce_bool_setting(value)
 
 
-OVERRIDE_HEADER = "\n\nADDITIONAL INSTRUCTIONS (these take precedence):\n"
+OVERRIDE_HEADER = "\n\n## Additional instructions (these take precedence)\n\n"
 
 
 def apply_override(prompt: str, override: str) -> str:
@@ -69,11 +72,13 @@ def apply_override(prompt: str, override: str) -> str:
     placeholder, the text is inserted there verbatim; otherwise it is appended
     under a precedence header.
     """
-    if not override or not override.strip():
-        return prompt.replace('{override}', '') if '{override}' in prompt else prompt
+    override = override.strip() if override else ""
     if '{override}' in prompt:
         return prompt.replace('{override}', override)
-    return prompt + OVERRIDE_HEADER + override
+    return (
+        prompt + OVERRIDE_HEADER + override
+        if override else prompt
+    )
 
 def strip_html(text: str|None) -> str:
     """Convert simple HTML to plain text for show-note timestamp parsing.
@@ -129,18 +134,6 @@ def scrub_description(description: str|None, max_length: int|None = None, split_
         description = description[:clip_begin] + "..." + description[clip_end:]
     return description
 
-def format_detection_notes_block(notes: str|None) -> str:
-    """Prompt block for per-feed operator notes, or "" when there are none."""
-    # Operator text is trusted: strip HTML only, so a cited time like 1:30 survives.
-    notes = re.sub(r'(?:\s*\n)+', '\n', strip_html(notes or '')).strip()[:DETECTION_NOTES_MAX_CHARS]
-    if not notes:
-        return ""
-    return (
-        "Operator notes for this show (written by the person running this server; "
-        "they describe how this show structures its ads and override the general "
-        f"guidance above when they apply):\n{notes}\n\n"
-    )
-
 def indent_text(text: str, indent: str|int,
                 indent_empty: bool = False,
                 skip_first: bool = False) -> str:
@@ -163,6 +156,67 @@ def indent_text(text: str, indent: str|int,
 def _clean_line(line: str, replace_with: str = ' ') -> str:
     """Remove control characters and trim the line."""
     return re.sub(r'[\x00-\x1f]+', replace_with, line).strip() if line else ""
+
+def format_prompt_heading(heading: str, level: int, content: str = "", indent: int = 0) -> str:
+    """Format a text heading with the specified level using markdown headings.
+    Heading is trimmed.
+    Returned string ends with a new line.
+    """
+    heading = _clean_line(heading) if heading else ""
+    if not heading:
+        raise ValueError("Heading cannot be empty")
+    if level < 1:
+        raise ValueError("Heading level must be at least 1")
+    content = content.strip() if content else ""
+    if content:
+        content = content + "\n"
+    return indent_text(f"{'#' * min(level, 6)} {heading}\n{content}", indent)
+
+def format_prompt_section(title: str, content: str = "",
+                          one_line: bool = False, indent: int = 0) -> str:
+    """Format a text section using bold title using markdown section style.
+    Both title and text are trimmed.
+    Returned string ends with a new line.
+    """
+    title = _clean_line(title) if title else ""
+    if not title:
+        raise ValueError("Section title cannot be empty")
+    content = content.strip() if content else ""
+    if content:
+        content = f" {content}" if one_line else f"\n{content}"
+    return indent_text(f"**{title}:**{content}\n", indent)
+
+def format_prompt_list(lines: list[str], bullet: str = '-',
+                       skip_empty: bool = True, indent: int = 0) -> str:
+    """Format a list of lines as a markdown bullet list.
+    Lines are trimmed. Empty lines are ignored when skip_empty is True.
+    Returned string ends with a new line.
+    """
+    line_indent = ' ' * (len(bullet) + 1)
+    bulleted_lines = [
+        f"{bullet} {indent_text(trimmed, line_indent, skip_first=True)}"
+        for line in lines if (trimmed := line.strip()) or not skip_empty
+    ]
+    return indent_text("\n".join(bulleted_lines) + "\n", indent)
+
+def format_prompt_list_numbered(lines: list[str], start_at: int = 1,
+                                number_format: str = "{0}.",
+                                skip_empty: bool = True, indent: int = 0) -> str:
+    """Format a list of lines as a markdown numbered list.
+    Lines are trimmed. Empty lines are ignored when skip_empty is True.
+    Returned string ends with a new line.
+    """
+    numbered_lines = []
+    line_indent = ''
+    for line in lines:
+        line = line.strip()
+        if skip_empty and not line:
+            continue
+        number = number_format.format(start_at + len(numbered_lines))
+        if len(line_indent) != len(number) + 1:
+            line_indent = ' ' * (len(number) + 1)
+        numbered_lines.append(f"{number} {indent_text(line, line_indent, skip_first=True)}")
+    return indent_text("\n".join(numbered_lines) + "\n", indent)
 
 def format_prompt_code_block(code: str, language: str = "text", fence_char: str = "`", indent: int = 0) -> str:
     """Format a block of text as a markdown code block. Supports nested code blocks.
