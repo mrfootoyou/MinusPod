@@ -1244,6 +1244,7 @@ Segment shape:
   "confidence": enum,
   "reason": string or null,
   "sponsor_name": string or null,
+  "start_text": string or null
   "end_text": string or null
 }
 
@@ -1253,19 +1254,22 @@ Field rules:
 - `end`: The index or end time offset of the last cue in the segment.
 - `category`: The segment category as defined above.
 - `confidence`: Indicates your confidence that start, end, and category are accurate:
-  - `high`: very confident; boundaries are clean and solid evidence for category.
-  - `medium`: reasonably confident.
-  - `low`: uncertain; boundaries are fuzzy or category assignment is weak.
+  - `high`: Boundaries are clean and solid evidence for category assignment.
+  - `medium`: Category is likely correct. Boundaries may need review.
+  - `low`: Boundaries are fuzzy or category assignment is weak.
 - `reason`: A *short* explanation for why the segment was categorized as such.
 - `sponsor_name`: The named sponsor (advertiser/brand/company) or product in a promotional segment, null otherwise.
-- `end_text`: The exact final 3-5 words of a promotional segment, null otherwise. Include punctuation in the text.
+- `start_text`: The first 5-12 words of ad copy in a sponsor or cross_promo segment, null otherwise. See comment below.
+- `end_text`: The final 5-12 words of ad copy in a sponsor or cross_promo segment, null otherwise. See comment below.
 
-Important: main_content segments must use null for `reason`, `sponsor_name`, and `end_text` unless instructed otherwise.
+Every `sponsor` and `cross_promo` segment must include the exact 5-12 leading and trailing words of ad copy in the `start_text` and `end_text` fields, respectively. Skip over any in/out cues, we just want ad copy. If the text is missing or unclear, use an empty string instead of guessing.
+
+Important: `main_content` segments must use null for `reason`, `sponsor_name`, `start_text`, and `end_text` unless instructed otherwise.
 
 <!--
 EXAMPLE: Partial transcript (with timestamps) and response:
-[45.0s - 48.0s] That's a great point. Let's take a quick break.
-[48.5s - 52.0s] This episode is brought to you by Athletic Greens.
+[1.6s - 47.0s] Thanks for joining us today… Let's take a quick break.
+[48.5s - 52.0s] Ready to start a healthier routine?
 [52.5s - 78.0s] AG1 is the daily foundational nutrition supplement… Go to athleticgreens.com/podcast.
 [78.5s - 82.0s] That's athleticgreens.com/podcast.
 [82.5s - 86.0s] Now, back to our conversation.
@@ -1276,9 +1280,12 @@ EXAMPLE: Partial transcript (with timestamps) and response:
 
 RESPONSE: 
 { "segments": [
-  {"start": 45.0, "end": 82.0, "confidence": 0.98, "category": "sponsor", "reason": "Athletic Greens sponsor read", "sponsor_name": "Athletic Greens", "end_text": "athleticgreens.com/podcast"},
-  {"start": 512.0, "end": 531.0, "confidence": 0.85, "category": "cross_promo", "reason": "Cross-promotion for sister podcast", "sponsor_name": "Startup Stories podcast", "end_text": "back to today's episode."}
-]}
+    {"start": 1.6, "end": 47.0, "confidence": "high", "category": "intro", "reason": "Welcome and throw to break", "sponsor_name": null, "start_text": null, "end_text": null},
+    {"start": 48.5, "end": 86.0, "confidence": "high", "category": "sponsor", "reason": "Athletic Greens sponsor read, out cue", "sponsor_name": "Athletic Greens", "start_text": "Ready to start a healthier routine?", "end_text": "That's athleticgreens.com/podcast"},
+    …
+    {"start": 512.0, "end": 531.0, "confidence": "high", "category": "cross_promo", "reason": "Cross-promotion for sister podcast and in/out cues", "sponsor_name": "Startup Stories", "start_text": "Hey, it's Jamie from Tech Weekly.", "end_text": "interviews with founders every Tuesday."}
+  ]
+}
 -->
 
 REMINDERS:
