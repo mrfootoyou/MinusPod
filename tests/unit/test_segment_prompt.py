@@ -1,7 +1,4 @@
 """Segment category emission in the detection prompt (#565).
-
-SHOW_SEGMENTS_PROMPT_SECTION is opt-in per podcast (detect_show_segments); merge-seam category
-normalization always runs.
 """
 import json
 import logging
@@ -13,7 +10,7 @@ bootstrap('segment_prompt_test_')
 
 from ad_detector import AddressingStats, AdDetector, WindowResult
 from config import SEGMENT_CATEGORIES, DEFAULT_SEGMENT_ACTION, normalize_segment_category
-from utils.constants import DEFAULT_SYSTEM_PROMPT, SHOW_SEGMENTS_PROMPT_SECTION
+from utils.constants import DEFAULT_SYSTEM_PROMPT
 from ad_detector.prompts import (
     parse_ads_from_response, parse_category_repair_response,
     format_category_repair_prompt,
@@ -84,46 +81,6 @@ def test_verification_wires_category_actions_into_repair_and_dedup():
     kwargs = run_pass.call_args.kwargs
     assert kwargs['action_map'] == action_map
     assert kwargs['category_repair_enabled'] is True
-
-
-class TestShowSegmentsSection:
-    def test_section_defines_intro_outro_recap(self):
-        for cat in ('intro', 'outro', 'recap'):
-            assert cat in SHOW_SEGMENTS_PROMPT_SECTION
-
-
-class TestPromptComposition:
-    def test_section_appended_when_flag_on(self):
-        det = _detector(detect_show_segments=True)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert SHOW_SEGMENTS_PROMPT_SECTION in prompt
-
-    def test_section_absent_when_flag_off(self):
-        det = _detector(detect_show_segments=False)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert SHOW_SEGMENTS_PROMPT_SECTION not in prompt
-
-    def test_section_absent_when_no_podcast_row(self):
-        det = _detector(detect_show_segments=True)
-        # slug=None -> get_podcast_row short-circuits to no row.
-        prompt = det._build_detection_system_prompt(None)
-        assert SHOW_SEGMENTS_PROMPT_SECTION not in prompt
-
-    def test_section_rides_along_on_operator_override(self):
-        # Section is appended after override resolution, so an opted-in
-        # feed still gets it even though it is nowhere in their override.
-        override = "Custom instructions with no category talk at all."
-        det = _detector(detect_show_segments=True, system_prompt=override)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert override in prompt
-        assert SHOW_SEGMENTS_PROMPT_SECTION in prompt
-
-    def test_flag_off_leaves_operator_override_untouched_by_section(self):
-        override = "Custom instructions with no category talk at all."
-        det = _detector(detect_show_segments=False, system_prompt=override)
-        prompt = det._build_detection_system_prompt('feed-a')
-        assert override in prompt
-        assert SHOW_SEGMENTS_PROMPT_SECTION not in prompt
 
 
 class TestParsedCategorySurvivesMergeSeam:
