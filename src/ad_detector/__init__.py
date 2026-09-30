@@ -51,7 +51,7 @@ from utils.markers import (
     subtract_spans,
 )
 from utils.prompt import (
-    format_sponsor_block, render_prompt, apply_override,
+    finalize_prompt, format_sponsor_block, render_prompt, apply_override,
     format_detection_notes_block, scrub_description, strip_comments_from_prompt
 )
 from utils.text import most_mentioned, truncate, word_boundary_re
@@ -1009,8 +1009,10 @@ class AdDetector:
             from utils.constants import DEFAULT_SYSTEM_PROMPT
             prompt = DEFAULT_SYSTEM_PROMPT
         prompt = strip_comments_from_prompt(prompt)
-        return self._apply_pass_override(
-            self._render_with_sponsors(prompt, 'seed_sponsors_detection'), 'system_prompt_override')
+        prompt = self._render_with_sponsors(prompt, 'seed_sponsors_detection')
+        prompt = self._apply_pass_override(prompt, 'system_prompt_override')
+        return finalize_prompt(prompt)
+
 
     def get_verification_prompt(self) -> str:
         """Get verification prompt from database or default, with dynamic sponsors substituted."""
@@ -1024,8 +1026,9 @@ class AdDetector:
             from database import DEFAULT_VERIFICATION_PROMPT
             prompt = DEFAULT_VERIFICATION_PROMPT
         prompt = strip_comments_from_prompt(prompt)
-        return self._apply_pass_override(
-            self._render_with_sponsors(prompt, 'seed_sponsors_verification'), 'verification_prompt_override')
+        prompt = self._render_with_sponsors(prompt, 'seed_sponsors_verification')
+        prompt = self._apply_pass_override(prompt, 'verification_prompt_override')
+        return finalize_prompt(prompt)
 
     def _get_sponsor_list_safely(self) -> str:
         """Pull the dynamic sponsor list, returning empty string on any error."""
@@ -1175,23 +1178,6 @@ class AdDetector:
             aligned.append(updated)
         return aligned
 
-    def _build_detection_system_prompt(self, slug: str, addressing_mode: str = 'timestamps') -> str:
-        """Compose the system prompt for detection window calls.
-
-        Appends SHOW_SEGMENTS_PROMPT_SECTION to get_system_prompt() when the
-        podcast opted in, after override resolution, so a customized
-        system_prompt still gets the show-segments instructions. Appends
-        SEGMENT_ID_SYSTEM_SECTION when ``addressing_mode`` is 'segment_ids'
-        (issue: hushpod adoption), after the show-segments section so both
-        can layer independently.
-        """
-        prompt = self.get_system_prompt()
-        if self._podcast_wants_show_segments(slug):
-            prompt = f"{prompt}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
-        if addressing_mode == 'segment_ids':
-            prompt = f"{prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-        return f"{prompt}{AD_QUOTE_ANCHOR_SECTION}"
-
     _HINT_TIER1_CAP = 12
     _HINT_SNIPPET_CHARS = 90
 
@@ -1339,11 +1325,21 @@ class AdDetector:
         window_end = window['end']
 
         transcript_lines = self._format_transcript_lines(window_segments, addressing_mode)
+
+        # `audio_context` only used in "timestamps" mode since it is based on
+        # timestamps and is useless in indexed mode.
+        # Suggestion: Insert audio cues into the transcript instead of making the
+        # LLM figure out where they belong.
         audio_context = audio_enforcer.format_for_window(
             audio_analysis, window_start, window_end
-        ) if audio_enforcer else ""
+        ) if audio_enforcer and addressing_mode == 'timestamps' else ""
+
+        # `recurrence_context` only used in "timestamps" mode since it is based on
+        # timestamps and is useless in indexed mode. We could probably lookup the
+        # index of each recurrence span if needed.
         recurrence_context = format_recurrence_hint(
-            recurrence_spans or [], window_start, window_end)
+            recurrence_spans, window_start, window_end
+        ) if recurrence_spans and addressing_mode == 'timestamps' else ""
 
         prompt = format_window_prompt(
             podcast_name=podcast_name,
@@ -2060,8 +2056,9 @@ class AdDetector:
                        f"for {total_duration/60:.1f}min episode")
 
             # Get prompts and model
-            system_prompt = self._build_detection_system_prompt(slug, addressing_mode)
+            system_prompt = self.get_system_prompt()
             model = self.get_model()
+            show_segments_enabled = self._podcast_wants_show_segments(slug)
 
             logger.info(f"[{slug}:{episode_id}] Using model: {model}")
             log_assembled_system_prompt(slug, episode_id, system_prompt)
@@ -2100,9 +2097,6 @@ class AdDetector:
 
             # Gates the category repair pass and the category-miss warning on
             # whether per-category actions are configured for this feed.
-            # Checks system_prompt for SHOW_SEGMENTS_PROMPT_SECTION instead of
-            # a second DB call: _build_detection_system_prompt already made it.
-            show_segments_enabled = SHOW_SEGMENTS_PROMPT_SECTION in system_prompt
             segment_categories_configured = show_segments_enabled or (
                 action_map is not None
                 and any(action != DEFAULT_SEGMENT_ACTION
@@ -3636,9 +3630,6 @@ class AdDetector:
                        f"for {total_duration/60:.1f}min processed audio")
 
             system_prompt = self.get_verification_prompt()
-            if addressing_mode == 'segment_ids':
-                system_prompt = f"{system_prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-            system_prompt = f"{system_prompt}{AD_QUOTE_ANCHOR_SECTION}"
             log_assembled_system_prompt(slug, episode_id, system_prompt,
                                         label="Verification system")
             model = self.get_verification_model()
