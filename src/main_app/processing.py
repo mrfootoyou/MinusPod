@@ -66,6 +66,7 @@ from utils.markers import (EDGE_TOLERANCE, auto_confirm_releases, carve_fragment
                            reject_barriers, reviewer_reject_stands,
                            set_reviewer_locks, spans_match, subtract_spans)
 from utils.pattern_catalog import pattern_catalog_scope
+from utils.text import merge_segments, split_segments_into_sentences
 from utils.time import (
     adjust_timestamp, epoch_to_iso, merge_cut_spans, overlap_ratio, overlap_seconds,
     ranges_overlap, span_inside_any_cut, utc_now_iso,
@@ -792,6 +793,20 @@ def _download_and_transcribe(slug, episode_id, episode_url,
             raise Exception("Failed to transcribe audio")
 
         _apply_transcript_corrections(slug, episode_id, segments)
+
+        # split segments into sentences to enable more precise identification
+        # of segments boundaries
+        segments, split_count = split_segments_into_sentences(segments)
+        if split_count > 0:
+            audio_logger.info(f"[{slug}:{episode_id}] Transcript split {split_count} times to create sentences")
+
+        # now merge sentences into larger segments separated by a gap of at least 0.5s
+        segments, merge_count = merge_segments(segments,
+                                               maximum_gap=0.4,
+                                               minimum_duration=5.0,
+                                               maximum_duration=30.0)
+        if merge_count > 0:
+            audio_logger.info(f"[{slug}:{episode_id}] Transcript merged {merge_count} sentences")
 
         duration_min = segments[-1]['end'] / 60
         audio_logger.info(f"[{slug}:{episode_id}] Transcription complete: {len(segments)} segments, {duration_min:.1f} min")
