@@ -1226,7 +1226,8 @@ BetterHelp, Athletic Greens, AG1, Shopify, Amazon, Audible, Squarespace, HelloFr
 RETAIL/CONSUMER BRANDS (network-inserted ads):
 Nordstrom, Macy's, Target, Walmart, Kohl's, Bloomingdale's, JCPenney, TJ Maxx, Home Depot, Lowe's, Best Buy, Costco, Gap, Old Navy, H&M, Zara, Nike, Adidas, Lululemon, Coach, Kate Spade, Michael Kors, Sephora, Ulta, Bath & Body Works, CVS, Walgreens, AutoZone, O'Reilly Auto Parts, Jiffy Lube, Midas, Gold Belly, Farmer's Dog, Caldera Lab, Monster Energy, Red Bull, Whole Foods, Trader Joe's, Kroger, GNC
 -->
-<!-- {sponsor_database} -->
+
+{sponsor_database}
 
 OUTPUT FORMAT:
 As a JSON API, you must return exactly one JSON object that conforms to the following schema.
