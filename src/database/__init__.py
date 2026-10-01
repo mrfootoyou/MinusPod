@@ -226,7 +226,7 @@ FALSE POSITIVE PREVENTION GUIDELINES:
 ORPHANED FRAGMENTS:
 Partial segments leftover from the first pass cut may be difficult to categorize accurately. Do your best and know that orphaned fragments will be merged into their parent segment, making the categorization of these fragments less critical.
 
-<!-- {sponsor_database} -->
+{sponsor_database}
 
 OUTPUT FORMAT:
 As a JSON API, you must return exactly one JSON object that conforms to the following schema.
