@@ -2027,26 +2027,28 @@ class AdDetector:
             log_assembled_system_prompt(slug, episode_id, system_prompt)
 
             # Prepare description section (shared across windows)
+            # Don't worry about having too many empty lines -- they will be
+            # collapsed before sending to LLM.
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section = f"Podcast Description:\n{podcast_description}\n\n"
+                description_section += f"Podcast Description:\n{podcast_description}\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed podcast description ({len(podcast_description)} chars)")
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
+                description_section += f"Episode Description (may also list episode sponsors):\n{episode_description}\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed episode description ({len(episode_description)} chars)")
 
             # Add podcast-specific known-pattern hint from ad_patterns
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:
-                description_section += sponsor_history
+                description_section += sponsor_history + "\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including known-pattern hint: {sponsor_history.strip()}")
 
             # Add learned ad-break position hint (issue #360 experiment)
             if positional_prior_hint:
-                description_section += positional_prior_hint
+                description_section += positional_prior_hint + "\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including positional prior hint: "
                             f"{positional_prior_hint.splitlines()[0]}")
 
@@ -3591,21 +3593,20 @@ class AdDetector:
                 pass1_cuts or [], episode_description)
 
             # Prepare description section
+            # Don't worry about having too many empty lines -- they will be
+            # collapsed before sending to LLM.
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section = f"Podcast Description:\n{podcast_description}\n\n"
+                description_section += f"Podcast Description:\n{podcast_description}\n\n"
             
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += (
-                    f"Episode Description (this describes the actual content topics discussed; "
-                    f"it may also list episode sponsors):\n{episode_description}\n"
-                )
+                description_section += f"Episode Description (may also list episode sponsors):\n{episode_description}\n\n"
 
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:
-                description_section += sponsor_history
+                description_section += sponsor_history + "\n\n"
 
             # Category actions must enter at the earliest merge seam. The
             # default verification prompt requires a category, and configured
