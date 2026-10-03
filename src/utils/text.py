@@ -309,14 +309,19 @@ def timed_spans_from_segments(
     return spans
 
 
-_EOS_PUNCTUATION = r'[.?!¿¡]'
+# End-of-sentence punctuation and quote characters for sentence segmentation.
+# U+ff1f: Fullwidth Question Mark
+# U+ff01: Fullwidth Exclamation Mark
+# U+2018: Left Single Quotation Mark
+# U+2019: Right Single Quotation Mark
+_EOS_PUNCTUATION = r'[.?!¿¡\uff1f\uff01]'
 _END_QUOTES = r'["”»“\'\u2018\u2019]'
-# matches words with EOS punctuation
+# Pattern to match words with EOS punctuation.
 _WORD_EOS_PATTERN = rf'{_EOS_PUNCTUATION}{_END_QUOTES}*$'
-# Matches words which, when followed by a period+space, DO NOT represent
-# end-of-sentence. These are usually titles, like "Dr. Smith".
+# Pattern to match words which DO NOT represent end-of-sentence when followed
+# by a period+space. These are usually titles, like "Dr. Smith".
 # Note: A period followed by a non-space or space+lowercase letter is
-# always ignored, e.g., "e.g.," or "U.S. beef".
+# never EOS, e.g., "e.g.," or "U.S. beef".
 _NOT_EOS_WORDS = '|'.join([
     'Mr', 'Mrs', 'Ms',
     'Dr', 'Prof', 'Rev', 'St', 'Hon',
@@ -337,13 +342,11 @@ _EOS_PATTERN = (
     rf'(?P<eos>{_EOS_PUNCTUATION}{_END_QUOTES}*(?=\s+[^a-z]))'
 )
 
-def _segment_text_to_sentence_segments(seg: dict) -> list[dict] | None:
-    """Convert a segment's text into sentence-level segments.
-    Args:
-        seg: A dictionary containing `text`, `start`, and `end` keys.
-    Returns:
-      A list of sentence-level segments with interpolated `start` and `end`
-      times, or None if `seg` is invalid.
+def _segment_text_to_sentence_segments(seg: dict,
+                                       sentence_gap: float,
+                                       ) -> list[dict] | None:
+    """Convert segment text into sentence-level segments with interpolated
+    `start` and `end` times.
     """
     text = seg.get('text')
     if not isinstance(text, str):
@@ -353,23 +356,13 @@ def _segment_text_to_sentence_segments(seg: dict) -> list[dict] | None:
         end = float(seg.get('end')) # type: ignore
     except (ValueError, TypeError):
         return None # bad input
-    return _text_to_sentence_segments(text, start, end)
+    return _text_to_sentence_segments(text, start, end, sentence_gap)
 
 def _text_to_sentence_segments(text: str, start: float, end: float,
-                               inter_sentence_pause_duration: float = 0.3
+                               sentence_gap: float,
                                ) -> list[dict]:
-    """Convert `text` into sentence-level segments.
-
-    Args:
-        text (str): The input text to split into sentences.
-        start (float): The start time of the text segment.
-        end (float): The end time of the text segment.
-        inter_sentence_pause_duration (float): The duration of pause between
-          sentences, in seconds.
-
-    Returns:
-        list[dict]: A list of sentence-level segments with interpolated
-          `start` and `end` times.
+    """Convert `text` into sentence-level segments with interpolated
+    `start` and `end` times.
     """
     text = text.strip()
     if not text:
@@ -392,7 +385,7 @@ def _text_to_sentence_segments(text: str, start: float, end: float,
     sentence_segments = []
     sentence_start = start
     word_total = sum(word_count for _, word_count in sentences)
-    word_delta = (end - start - inter_sentence_pause_duration * (len(sentences) - 1)) / word_total
+    word_delta = (end - start - sentence_gap * (len(sentences) - 1)) / word_total
     if word_delta <= 0.010: # probably an unrealistic unit test
         word_delta = (end - start) / word_total
     for sentence, word_count in sentences:
@@ -402,31 +395,30 @@ def _text_to_sentence_segments(text: str, start: float, end: float,
             'start': round(sentence_start, 3),
             'end': round(sentence_end, 3),
         })
-        sentence_start = sentence_end + inter_sentence_pause_duration
+        sentence_start = sentence_end + sentence_gap
     if sentence_segments: # preserve exact start/end
         sentence_segments[0]['start'] = start
         sentence_segments[-1]['end'] = end
     return sentence_segments
 
 def _split_segment_into_sentences(seg: dict,
-                                  do_not_interpolate: bool = False
+                                  interpolate: bool = False,
+                                  sentence_gap: float = 0.3,
                                   ) -> list[dict]:
-    """Attempts to split the given segment into individual sentences based on
-    clear punctuation. See `split_segments_into_sentences` for usage.
-    """
+    """See split_segments_into_sentences()."""
+    sentences = []
     seg_words = seg.get('words')
     if not isinstance(seg_words, list) or not seg_words:
-        if do_not_interpolate:
-            return [seg]
-        return _segment_text_to_sentence_segments(seg) or [seg]
+        if interpolate:
+            sentences = _segment_text_to_sentence_segments(seg, sentence_gap)
+        return sentences or [seg]
 
-    sentences = []
     first_word, next_word = 0, 0
     while next_word < len(seg_words) - 1: # we handle the last word/sentence below
         word_seg = seg_words[next_word]
         word = (word_seg if isinstance(word_seg, dict) else {}).get('word')
         if not isinstance(word, str):
-            return [seg] # bad input
+            return [seg] # bad input, return original segment
 
         if (re.search(_WORD_EOS_PATTERN, word)):
             # found end of sentence
@@ -456,7 +448,8 @@ def _split_segment_into_sentences(seg: dict,
     return sentences
 
 def split_segments_into_sentences(segments: list[dict],
-                                  do_not_interpolate: bool = False
+                                  interpolate: bool = False,
+                                  sentence_gap: float = 0.3,
                                   ) -> tuple[list[dict], int]:
     """Attempts to split the given segments into individual sentences based on
     clear punctuation. Each input segment is assumed to contain at least one
@@ -465,10 +458,12 @@ def split_segments_into_sentences(segments: list[dict],
     Args:
         segments (list[dict]): A list of segments, where each segment is a
           dictionary containing either a `words` key containing an ordered
-          list of word-level segments, or a `text`, `start`, and `end` keys
-          from which the words can be interpolated.
-        do_not_interpolate (bool): If True, the function will not attempt to
-          interpolate missing `words` from `text`, `start`, and `end` keys.
+          list of word-level segments, or a `text`, `start`, and `end` keys.
+        interpolate (bool): If True and the `words` key is not present,
+          the function will interpolate sentence timing from the segment's
+          `text`, `start`, and `end` keys.
+        sentence_gap (float): The gap duration, in seconds, to insert between
+          interpolated sentences. Used only when interpolating.
 
     Returns:
         tuple[list[dict], int]: A tuple containing a list of segments split into
@@ -479,7 +474,9 @@ def split_segments_into_sentences(segments: list[dict],
     sentence_segments = []
     for seg in segments:
         sentence_segments += _split_segment_into_sentences(
-            seg, do_not_interpolate=do_not_interpolate,
+            seg,
+            interpolate=interpolate,
+            sentence_gap=sentence_gap,
         )
     return sentence_segments, len(sentence_segments) - len(segments)
 
@@ -500,17 +497,14 @@ def merge_segments(segments: list[dict],
     the gap between them is less than `maximum_gap` and the merged
     segment does not exceed `maximum_duration`.
 
-    This gives best results when the input segments are focused (e.g.
-    sentences) and `maximum_gap` is less than the time between segments
-    (~0.5-1.0 second) and more than the time between related sentences
-    (~0.1-0.5 second).
-
     Args:
         segments: List of segment dicts with valid `start` and `end` keys
           and ordered by `start` and `end`.
         maximum_gap (float): The maximum allowed gap (in seconds) between
           segments to consider them for merging. Segments separated by a
-          gap larger than this will not be merged.
+          gap larger than this will not be merged. Smaller values result
+          in fewer merges while larger values may merge segments that are
+          less closely related.
         minimum_duration (float): Segments shorter than this duration will
           be merged with their shortest nearest neighbor.
         maximum_duration (float): The maximum length of merged segments
@@ -524,70 +518,80 @@ def merge_segments(segments: list[dict],
     if len(segments) <= 1 or minimum_duration <= 0.0:
         return segments, 0
 
-    # Algorithm: Merge shortest segments first:
-    # 1. Find all short segments.
-    # 2. Sort by shortest duration.
-    # 3. Merge each short segment with shortest near neighbor.
-
-    # use a "priority queue" ordered by shortest segment duration
-    short_segments = []
-    tie_breaker = count()
-    def maybe_queue_short_segment(seg: dict) -> bool:
-        duration = _segment_duration(seg)
-        if duration < minimum_duration:
-            # tie-breaker ensures that heapq never compares the segment dicts
-            # when there are duplicate durations
-            heapq.heappush(short_segments, (duration, next(tie_breaker), seg))
-            return True
-        return False
+    # Algorithm:
+    # 1. Find the shortest segment less than `minimum_duration`.
+    # 2. Find its nearest neighbor less than `maximum_gap` distance away
+    #    AND whose merged duration is less than `maximum_duration`.
+    # 3. Merge it with the chosen neighbor if available.
 
     # make a copy of all segments to avoid modifying the originals
     segments = [seg.copy() for seg in segments]
+
+    # add all short segments to a priority queue ordered by shortest duration
+    short_segments = []
+    tie_breaker = count()
+    def queue_short_segment(seg: dict):
+        duration = _segment_duration(seg)
+        if duration <= minimum_duration:
+            # tie-breaker ensures that heapq never compares the segments
+            # when there are duplicate durations
+            heapq.heappush(short_segments, (duration, next(tie_breaker), seg))
+
+    def next_shortest_segment() -> tuple[dict, float] | None:
+        if not short_segments:
+            return None
+        duration, _, shortest = heapq.heappop(short_segments)
+        return (shortest, duration)
+
+    def remove_from_queue(seg: dict):
+        # not the most efficient method, but heapq does not support direct
+        # removal of arbitrary elements
+        for i, (_, _, s) in enumerate(short_segments):
+            if s is seg:
+                short_segments.pop(i)
+                heapq.heapify(short_segments)
+                return
+
     for seg in segments:
-        maybe_queue_short_segment(seg)
+        queue_short_segment(seg)
 
-    while short_segments:
-        # we cant remove merged segments from the heap but we can skip
-        # them if the queued duration does not match the current duration
-        queued_duration, _, shortest = heapq.heappop(short_segments)
-        duration = _segment_duration(shortest)
-        if duration != queued_duration:
-            continue # outdated/merged since it was queued
+    # 1. get next shortest segment
+    while (next_short := next_shortest_segment()):
+        shortest, duration = next_short
 
-        # try to merge...
-        merged = None
+        # 2. find neighboring merge candidates...
         i = segments.index(shortest)
         left = segments[i - 1] if i > 0 else None
+        left_gap = _segment_gap(left, shortest) if left else math.inf
+        if left and (left_gap > maximum_gap or _segment_duration(left) > maximum_duration - duration):
+            left, left_gap = None, math.inf  # cannot merge with left neighbor
+
         right = segments[i + 1] if (i + 1) < len(segments) else None
-        left_dur = _segment_duration(left) if left else math.inf
-        right_dur = _segment_duration(right) if right else math.inf
-        if (left
-            and left_dur < right_dur # choose smaller neighbor
-            and _segment_gap(left, shortest) < maximum_gap # must be near
-            and left_dur + duration <= maximum_duration # must not exceed maximum duration
-        ):
-            # merge [left <-- shortest]
+        right_gap = _segment_gap(shortest, right) if right else math.inf
+        if right and (right_gap > maximum_gap or _segment_duration(right) > maximum_duration - duration):
+            right, right_gap = None, math.inf  # cannot merge with right neighbor
+
+        # 3. merge with the nearer neighbor...
+        merged = None
+        if left and left_gap <= right_gap:
+            # append to left
             left['end'] = shortest['end']
             if left.get('text') or shortest.get('text'):
                 left['text'] = ' '.join([left.get('text', ''), shortest.get('text', '')])
             if left.get('words') or shortest.get('words'):
                 left['words'] = left.get('words', []) + shortest.get('words', [])
             merged = left
-
-        elif (right
-              and _segment_gap(shortest, right) < maximum_gap # must be near
-              and duration + _segment_duration(right) <= maximum_duration # must not exceed maximum duration
-        ):
-            # merge [shortest --> right]
+        elif right:
+            # prepend to right
             right['start'] = shortest['start']
             if right.get('text') or shortest.get('text'):
                 right['text'] = ' '.join([shortest.get('text', ''), right.get('text', '')])
             if right.get('words') or shortest.get('words'):
                 right['words'] = shortest.get('words', []) + right.get('words', [])
             merged = right
-
         if merged:
             segments.remove(shortest)
-            maybe_queue_short_segment(merged)
+            remove_from_queue(merged)
+            queue_short_segment(merged)
 
     return segments, original_len - len(segments)

@@ -81,7 +81,7 @@ class TestSplitSegmentsIntoSentences:
             }
         ]
 
-        split_segments, split_count = split_segments_into_sentences(segments)
+        split_segments, split_count = split_segments_into_sentences(segments, interpolate=True)
         assert split_count == 4
         assert len(split_segments) == 5
         assert split_segments[0]['text'] == 'One.'
@@ -113,7 +113,7 @@ class TestSplitSegmentsIntoSentences:
             }
         ]
 
-        split_segments, split_count = split_segments_into_sentences(segments, do_not_interpolate=True)
+        split_segments, split_count = split_segments_into_sentences(segments, interpolate=False)
         assert split_count == 0
         assert len(split_segments) == 1
         assert split_segments[0]['text'] == 'Hello. world.'
@@ -157,7 +157,7 @@ class TestSplitSegmentsIntoSentences:
             }
         ]
 
-        split_segments, split_count = split_segments_into_sentences(segments)
+        split_segments, split_count = split_segments_into_sentences(segments, interpolate=True)
         assert split_count == 2
         assert len(split_segments) == 4
         assert split_segments[0]['text'] == 'First segment.'
@@ -199,7 +199,7 @@ class TestSplitSegmentsIntoSentences:
             "End of the test text"
         )
 
-        result = _text_to_sentence_segments(text=text, start=1.0, end=12.0, inter_sentence_pause_duration=0.3)
+        result = _text_to_sentence_segments(text=text, start=1.0, end=12.0, sentence_gap=0.3)
         assert isinstance(result, list)
         assert len(result) == 5
 

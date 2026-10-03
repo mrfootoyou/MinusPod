@@ -11,6 +11,8 @@ import time
 from concurrent.futures import Future, TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
+from itertools import islice
+
 
 import requests
 import requests.exceptions
@@ -792,21 +794,9 @@ def _download_and_transcribe(slug, episode_id, episode_url,
         if not segments:
             raise Exception("Failed to transcribe audio")
 
+        segments = _split_and_merge_segments(segments)
+
         _apply_transcript_corrections(slug, episode_id, segments)
-
-        # split segments into sentences to enable more precise identification
-        # of segments boundaries
-        segments, split_count = split_segments_into_sentences(segments)
-        if split_count > 0:
-            audio_logger.info(f"[{slug}:{episode_id}] Transcript split {split_count} times to create sentences")
-
-        # now merge sentences into larger segments separated by a gap of at least 0.5s
-        segments, merge_count = merge_segments(segments,
-                                               maximum_gap=0.4,
-                                               minimum_duration=5.0,
-                                               maximum_duration=30.0)
-        if merge_count > 0:
-            audio_logger.info(f"[{slug}:{episode_id}] Transcript merged {merge_count} sentences")
 
         duration_min = segments[-1]['end'] / 60
         audio_logger.info(f"[{slug}:{episode_id}] Transcription complete: {len(segments)} segments, {duration_min:.1f} min")
@@ -827,6 +817,50 @@ def _download_and_transcribe(slug, episode_id, episode_url,
 
     return audio_path, segments
 
+def _split_and_merge_segments(segments: list[dict]) -> list[dict]:
+    """Split segments into sentences then merge short sentences with nearby
+    neighbors (assuming closely spaced sentences are related).
+
+    Splitting to sentences can easily triple or even quadruple the number of
+    segments. If we don't merge them sufficiently, we'll end up with a lot
+    of short segments resulting in excessive token usage since each
+    cue timestamp requires ~12 tokens. On the other hand, if we merge too
+    aggressively we risk combining unrelated segments which is exactly the
+    thing we are trying to avoid. So we need to choose a maximum sentence
+    gap that balances these concerns.
+    Most podcasts are dominated by short sentence gaps, presumably within
+    paragraphs. In many cases, the gap distribution peaks around 100-300ms
+    tailing off around 1.5s (ignoring extreme outliers). The average gap is
+    in the 350-450ms range with a relatively large std.dev of 300-400ms.
+    We'll choose the maximum gap based on the average.
+    """
+    if not segments:
+        return segments
+    sentence_segments, _ = split_segments_into_sentences(
+        segments,
+        interpolate=False, # do not interpolate sentence boundaries
+    )
+    gap_total = 0
+    gap_count = 0
+    gap_min_outlier, gap_max_outlier = 0.0, 2.0 # seconds
+    prev_end = sentence_segments[0]['end']
+    for s in islice(sentence_segments, 1, None):
+        gap = s['start'] - prev_end
+        prev_end = s['end']
+        if gap_min_outlier <= gap and gap < gap_max_outlier:
+            gap_total += gap
+            gap_count += 1
+    avg_gap = gap_total / gap_count if gap_count > 0 else 0
+    min_segment_gap, max_segment_gap = 0.350, 0.500 # seconds
+    segment_gap = min(max(min_segment_gap, avg_gap), max_segment_gap)
+    merged_segments, _ = merge_segments(
+        sentence_segments,
+        maximum_gap=segment_gap,
+        minimum_duration=7.0, # try to merge cues shorter than this
+        maximum_duration=30.0, # maximum merged length
+    )
+    audio_logger.debug(f"Split {len(segments)} transcript segments into {len(sentence_segments)} sentences then merged into {len(merged_segments)} paragraph segments using {segment_gap:.3f}s maximum gap")
+    return merged_segments
 
 def _run_audio_analysis(slug, episode_id, audio_path, segments, force_cue_detection=False):
     """Pipeline stage: Run volume + transition detection on audio."""
