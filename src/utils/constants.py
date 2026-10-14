@@ -1189,35 +1189,39 @@ The transcript is presented in one of two formats:
 
 SEGMENTATION RULES:
 - Build a continuous chain of segments from the first cue to the last. No gaps. No overlap.
-- Group consecutive cues into the largest coherent block.
-- Split segments immediately when the purpose or topic changes.
+- Ensure that each segment is correctly categorized according to the rules defined below.
 
-Every segment must be assigned one of the following categories:
-- `intro`: theme, welcome
-- `teaser`: previews of upcoming content
-- `recap`: "previously on…"
-- `main_content`: cold open, narrative, interview, Q&A. The episode's raison d'être.
-- `sponsor`: ads or promotions unrelated to the podcast or its network.
-- `cross_promo`: promos for sister podcasts or podcast network (Acast, Spotify)
-- `self_promo`: host's Patreon, merch, tours
-- `interaction`: calls to action (like, review, comment)
-- `transition`: musical or narrative interludes
-- `outro`: sign-off, credits, theme
+CATEGORIES:
+Segments categories fall into two groups: Content and Promotional.
+
+Content categories include:
+- `main_content`: The core value proposition of the episode, including cold open, narrative, story telling, commentary, interview, Q&A, etc.
+- `intro`: opening theme, host welcome and introductions. (Note: cold open / story intro is `main_content`.)
+- `outro`: sign-off, credits, closing theme (Note: a closing conversation or storyteller bio is `main_content`.)
+- `interaction`: calls to action (like, review, comment).
+- `teaser`: previews of upcoming content; hook for the audience to stay tuned.
+- `recap`: Summary of prior episodes, e.g. "previously on…" (Note: an end of episode summary is `main_content`.)
+- `transition`: musical or narrative interlude bridging segments. Prefer one of the other content categories when possible.
+
+Promotional categories include:
+- `sponsor`: ads or promotions unrelated to the podcast or its network, including trailing disclaimers.
+- `cross_promo`: promos for sister podcasts or the podcast network (Acast, Spotify, etc).
+- `self_promo`: host's Patreon, merch, tours, etc.
 
 CONSTRAINTS:
-- Cues are atomic and cannot be split.
-- Absorb ad bumpers and in/out cues into the segments they bound.
-- Ad disclaimers, which often do not transcribe well, always belong in the preceding ad segment.
-
-MULTI-SEGMENT CUES:
-Cues are atomic but they may occasionally contain content from two distinct segments. When this occurs and the segments have the same category (e.g. `sponsor`), then simply merge them into a single segment (include both sponsor names if applicable). Otherwise, assign the cue to the segment that best represents its primary content.
-For example, ad bumpers and in/out cues often appear in main content cues. While we prefer to put these in the segment they bound (usually an ad), in this case you should just treat the cue as main content (always favor main content).
+- Cues are atomic and cannot be split. See MULTI-SEGMENT CUES for guidance on handling cues that span multiple segments.
+- Content segments should be as large as possible while maintaining a single coherent category.
+- Create one segment per promotion. Do not merge promotional segments unless instructed otherwise.
+- Merge very short segments (less than a few seconds) into a neighboring segment when possible.
 
 FALSE POSITIVE PREVENTION GUIDELINES:
 - Organic brand mentions, product discussions, or news coverage stay in `main_content` unless explicit and prolonged promotional language is used.
 - Guest plugs stay in `main_content`.
 - Passing host mentions of URLs or social handles stay in `main_content` unless sustained and directed at the audience.
-- When unsure if a segment is main content or not, assume that it is.
+- When unsure if a segment is `main_content` or not, assume that it is.
+
+MULTI-SEGMENT CUES:
+Cues are atomic but they may occasionally contain content from two distinct segments. When this happens you should include the cue in both segments (this is the only scenario where a cue may be included in multiple segments).
 
 <!--
 COMMON PODCAST SPONSORS (high confidence if mentioned):
@@ -1242,7 +1246,7 @@ Segment shape:
   "start": number,
   "end": number,
   "category": enum,
-  "confidence": enum,
+  "confidence": number,
   "reason": string or null,
   "sponsor_name": string or null,
   "start_text": string or null
@@ -1254,18 +1258,13 @@ Field rules:
 - `start`: The index or start time offset of the first cue in the segment.
 - `end`: The index or end time offset of the last cue in the segment.
 - `category`: The segment category as defined above.
-- `confidence`: Indicates your confidence that start, end, and category are accurate:
-  - `high`: Boundaries are clean and solid evidence for category assignment.
-  - `medium`: Category is likely correct. Boundaries may need review.
-  - `low`: Boundaries are fuzzy or category assignment is weak.
-- `reason`: A *short* explanation for why the segment was categorized as such.
+- `confidence`: A number between 0.0 and 1.0 indicating how confident you are that start, end, and category are accurate.
+- `reason`: A *short* explanation for why the segment was categorized as such. Use null for main_content segments.
 - `sponsor_name`: The named sponsor (advertiser/brand/company) or product in a promotional segment, null otherwise.
-- `start_text`: The first 5-12 words of ad copy in a sponsor or cross_promo segment, null otherwise. See comment below.
-- `end_text`: The final 5-12 words of ad copy in a sponsor or cross_promo segment, null otherwise. See comment below.
+- `start_text`: The first 5-12 words of ad copy, null otherwise. See comment below.
+- `end_text`: The final 5-12 words of ad copy, null otherwise. See comment below.
 
-Every `sponsor` and `cross_promo` segment must include the exact 5-12 leading and trailing words of ad copy in the `start_text` and `end_text` fields, respectively. Skip over any in/out cues, we just want ad copy. If the text is missing or unclear, use an empty string instead of guessing.
-
-Important: `main_content` segments must use null for `reason`, `sponsor_name`, `start_text`, and `end_text` unless instructed otherwise.
+Every `sponsor` and `cross_promo` segment must include `start_text` and `end_text`. Ignore any in/out cues, we just want ad copy. If the text is missing or unclear, use an empty string.
 
 <!--
 EXAMPLE: Partial transcript (with timestamps) and response:
@@ -1281,19 +1280,23 @@ EXAMPLE: Partial transcript (with timestamps) and response:
 
 RESPONSE: 
 { "segments": [
-    {"start": 1.6, "end": 47.0, "confidence": "high", "category": "intro", "reason": "Welcome and throw to break", "sponsor_name": null, "start_text": null, "end_text": null},
-    {"start": 48.5, "end": 86.0, "confidence": "high", "category": "sponsor", "reason": "Athletic Greens sponsor read, out cue", "sponsor_name": "Athletic Greens", "start_text": "Ready to start a healthier routine?", "end_text": "That's athleticgreens.com/podcast"},
+    {"start": 1.6, "end": 47.0, "confidence": 0.97, "category": "intro", "reason": "Welcome and throw to break", "sponsor_name": null, "start_text": null, "end_text": null},
+    {"start": 48.5, "end": 86.0, "confidence": 0.95, "category": "sponsor", "reason": "Athletic Greens sponsor read, out cue", "sponsor_name": "Athletic Greens", "start_text": "Ready to start a healthier routine?", "end_text": "That's athleticgreens.com/podcast"},
     …
-    {"start": 512.0, "end": 531.0, "confidence": "high", "category": "cross_promo", "reason": "Cross-promotion for sister podcast and in/out cues", "sponsor_name": "Startup Stories", "start_text": "Hey, it's Jamie from Tech Weekly.", "end_text": "interviews with founders every Tuesday."}
+    {"start": 512.0, "end": 531.0, "confidence": 0.92, "category": "cross_promo", "reason": "Cross-promotion for sister podcast and in/out cues", "sponsor_name": "Startup Stories", "start_text": "Hey, it's Jamie from Tech Weekly.", "end_text": "interviews with founders every Tuesday."}
   ]
 }
 -->
 
 REMINDERS:
-- Output [compact] JSON only. No Markdown, code fences, or explanatory text. Only JSON.
+- Output JSON only. No Markdown, code fences, or explanatory text. Only JSON.
 - Use exactly the specified field names, and only those fields.
-- Ensure the result is valid, parseable JSON.
-"""
+- Output as little JSON as possible while adhering to the rules and schema:
+  - Consecutive content segments with the same category should be merged.
+  - Omit or assign null to fields which are not applicable, such as `reason` for main_content, or `sponsor_name`, `start_text`, and `end_text` for non-promotional segments.
+  - Output compact JSON (no extra spaces or line breaks).
+- Ensure the output is valid, parseable JSON.
+""".strip()
 
 # Opt-in addition to DEFAULT_SYSTEM_PROMPT (issue #565): appended only when
 # detect_show_segments is enabled. ad_detector.AdDetector appends it after
