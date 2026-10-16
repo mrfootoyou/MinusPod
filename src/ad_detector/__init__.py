@@ -1134,7 +1134,18 @@ class AdDetector:
     @staticmethod
     def _format_transcript_lines(window_segments, addressing_mode):
         if addressing_mode == 'segment_ids':
-            return [f"[{seg['sid']}] {seg['text']}" for seg in window_segments]
+            transcript_lines = []
+            # prefix each segment with its ID and display long gaps between segments
+            min_gap_callout = 1.5
+            prev_end, gap_displayed = None, False
+            for seg in window_segments or []:
+                gap = max(0, seg['start'] - prev_end) if prev_end is not None else -1
+                if gap >= min_gap_callout:
+                    transcript_lines.append(f"[Gap of {gap:.1f}s{'' if gap_displayed else ' (no transcript data; likely silence, music, or unintelligible speech)'}]")
+                    gap_displayed = True
+                transcript_lines.append(f"[{seg['sid']}] {seg['text']}")
+                prev_end = seg['end']
+            return transcript_lines
         return [f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}"
                 for seg in timed_line_segments(window_segments)]
 
