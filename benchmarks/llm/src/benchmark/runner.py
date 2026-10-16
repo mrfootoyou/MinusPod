@@ -179,7 +179,7 @@ def _build_user_prompt(
     id_segments: list[dict] | None = None,
 ) -> str:
     description = scrub_description(episode.metadata.description, max_length=4000)
-    description_section = f"\n\nEpisode description: {description}\n" if description else ""
+    description_section = f"\n\nEpisode description (may list episode sponsors):\n{description}\n" if description else ""
     if addressing_mode == "segment_ids":
         transcript_lines = []
         # prefix each segment with its ID and display long gaps between segments
