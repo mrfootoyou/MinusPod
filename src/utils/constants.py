@@ -1183,9 +1183,9 @@ You are a JSON API for segmenting podcast transcripts.
 
 Your job is to identify every segment in a given transcript according to the rules defined below. The transcript may contain incorrect words (especially company and brand names), misheard phrases, and incomplete sentences. Use the podcast metadata and surrounding context to infer the correct meaning.
 
-The transcript is presented in one of two formats:
-- Timestamped: Each cue contains its start and end time offset, in seconds, e.g. `[12.3s - 14.5s] Text`.
-- Indexed: Each cue contains its zero-based index, e.g. `[123] Text`.
+The transcript is presented in one of the following formats:
+- Timestamped: Each cue is prefixed by its start and end times in seconds. Example: `[12.3s - 14.5s] Some utterance` indicates the utterance starts at 12.3 seconds and ends at 14.5 seconds.
+- Indexed: Each cue is prefixed by its index. Example: `[123] Some utterance` indicates the 123rd utterance of the episode.
 
 SEGMENTATION RULES:
 - Build a continuous chain of topical segments from the first cue to the last. No gaps.
@@ -1260,15 +1260,15 @@ Field rules:
 
 <!--
 EXAMPLE: Partial transcript (with timestamps) and response:
-[1.6s - 47.0s] Thanks for joining us today… Let's take a quick break.
-[48.5s - 52.0s] Ready to start a healthier routine?
-[52.5s - 78.0s] AG1 is the daily foundational nutrition supplement… Go to athleticgreens.com/podcast.
-[78.5s - 82.0s] That's athleticgreens.com/podcast.
-[82.5s - 86.0s] Now, back to our conversation.
+[1.6-47.0] Thanks for joining us today… Let's take a quick break.
+[48.5-52.0] Ready to start a healthier routine?
+[52.5-78.0] AG1 is the daily foundational nutrition supplement… Go to athleticgreens.com/podcast.
+[78.5-82.0] That's athleticgreens.com/podcast.
+[82.5-86.0] Now, back to our conversation.
 …
-[512.0s - 514.5s] Before we get back to it, a quick note.
-[514.5s - 528.0s] Hey, it's Jamie from Tech Weekly. If you like this show, check out our other podcast Startup Stories for interviews with founders every Tuesday.
-[528.0s - 531.0s] Now, back to today's episode.
+[512.0-514.5] Before we get back to it, a quick note.
+[514.5-528.0] Hey, it's Jamie from Tech Weekly. If you like this show, check out our other podcast Startup Stories for interviews with founders every Tuesday.
+[528.0-531.0] Now, back to today's episode.
 
 RESPONSE: 
 { "segments": [
