@@ -221,9 +221,9 @@ def format_window_prompt(
     )
 
     transcript = (
-        "Transcript with timestamps:\n"
+        "TRANSCRIPT (with timestamps):\n"
         if addressing_mode == "timestamps" 
-        else "Transcript with indexes:\n"
+        else "TRANSCRIPT (with indexes):\n"
     )
     transcript += "\n".join(transcript_lines)
 
