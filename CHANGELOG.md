@@ -11,6 +11,9 @@ release notes.
 
 ## [Unreleased]
 
+### Added
+- Introduces `utils/segments.py` containing helper functions for normalizing, splitting and merging text segments.
+
 ### Changed
 - README rewritten as a short overview: one-line feature bullets that link
   to the topic docs, a quick start of three commands, and the setup, password
@@ -19,6 +22,10 @@ release notes.
   docs link to it instead of restating it, and upgrade history narration is
   rewritten as current behavior. Stale glossary entries, the podcast search
   default, old button labels and a dead anchor are fixed.
+- Transcribers normalize raw transcript segments immediately after creation,
+  primarily to guarantee ordering and eliminate word-pairs ASAP.
+- Use `segments.join_word_segments()` to convert raw word lists into text,
+  preventing misrendering of space-prefixed words.
 
 - openapi.yaml carries a fixed placeholder version. The served spec already
   substitutes the running version from version.py, so the file no longer needs

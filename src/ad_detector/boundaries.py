@@ -26,6 +26,7 @@ from utils.markers import (
     recorded_member_spans,
     word_timed_edge_valid,
 )
+from utils.segments import join_word_segments
 from utils.text import get_transcript_text_for_range
 from utils.time import overlap_seconds, ranges_overlap
 from sponsor_context import domain_labels
@@ -523,7 +524,7 @@ def _compute_timed_utterances(segment: dict) -> list[dict] | None:
     segment_text = segment.get('text')
     if not isinstance(segment_text, str):
         return None
-    if (re.findall(r'\w+', ' '.join(word['word'] for word in timed).lower())
+    if (re.findall(r'\w+', join_word_segments(timed).lower())
             != re.findall(r'\w+', segment_text.lower())):
         return None
     utterances = []
@@ -540,7 +541,7 @@ def _compute_timed_utterances(segment: dict) -> list[dict] | None:
     return [
         {
             'start': group[0]['start'], 'end': group[-1]['end'],
-            'text': ' '.join(word['word'].strip() for word in group).lower(),
+            'text': join_word_segments(group).lower(),
             'words': group,
             'terminal': group[-1]['word'].strip().endswith(('.', '!', '?')),
         }
@@ -564,7 +565,7 @@ def timed_line_segments(segments: list[dict]) -> list[dict]:
                 lines.append({
                     'start': group[0]['start'],
                     'end': group[-1]['end'],
-                    'text': ' '.join(word['word'].strip() for word in group),
+                    'text': join_word_segments(group),
                     'words': group,
                     'word_timed_line': True,
                 })
@@ -577,7 +578,7 @@ def _timed_ad_evidence_end(utterance: dict,
     if _return_word_index(utterance) is not None:
         return None
     words = utterance['words']
-    text = ' '.join(word['word'].strip().lower() for word in words)
+    text = join_word_segments(words).lower()
     positions = []
     offset = 0
     for word in words:

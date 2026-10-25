@@ -734,7 +734,8 @@ class Transcriber:
             try:
                 segments = cast(list[dict], normalize_segments(segments))
             except Exception as e:
-                # `normalize_segments` shouldn't fail. We'll fix if errors occur.
+                # `normalize_segments()` should only fail when the input is
+                # malformed (wrong structure or content)
                 logger.error(f"Error normalizing transcript segments: {e}")
                 raise
         return segments
