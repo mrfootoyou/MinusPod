@@ -1204,7 +1204,7 @@ class AdDetector:
             if is_defined_pattern(p) and len(tier1) < self._HINT_TIER1_CAP:
                 snippet = truncate(p.get('intro_text') or p.get('outro_text') or '', self._HINT_SNIPPET_CHARS)
                 category = sponsor_categories.get(key) or p.get('category') or 'sponsor'
-                line = f"- {sponsor} ({category} read)."
+                line = f"- {sponsor} ({category})."
                 if snippet:
                     line += f' Opens like: "{snippet}"'
                 tier1.append(line)
@@ -1215,18 +1215,18 @@ class AdDetector:
         # A sponsor-level category still reaches the prompt when every pattern
         # naming it is auto-learned, which the tier above leaves nameless.
         categorized = [
-            f"- {name} ({sponsor_categories[key]} read)."
+            f"- {name} ({sponsor_categories[key]})."
             for key, name in sorted(names.items())
             if key in sponsor_categories and key not in tier1_keys
         ]
         leftovers = sorted(name for key, name in names.items() if key not in sponsor_categories)
         parts = []
         if tier1 or categorized:
-            parts.append("Known recurring ads on this feed:\n" + "\n".join(tier1 + categorized))
+            parts.append("Previously identified segments to watch out for:")
+            parts.extend(tier1)
+            parts.extend(categorized)
         if leftovers:
-            parts.append(f"Previously detected sponsors for this podcast: {', '.join(leftovers)}")
-        parts.append("Reads for the sponsors above are ads on this feed; "
-                     "report them with the stated category.")
+            parts.append(f"Previously identified sponsors to watch out for: {', '.join(leftovers)}")
         return "\n".join(parts) + "\n"
 
     def _apply_sponsor_segment_categories(self, ads, slug, episode_id):
