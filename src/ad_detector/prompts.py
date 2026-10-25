@@ -64,10 +64,12 @@ Please segment the following podcast transcript.
 
 {window_context}
 
+=== EPISODE METADATA ===
 Podcast: {podcast_name}
 Episode: {episode_title}
 {description_section}
 
+=== EPISODE TRANSCRIPT ===
 {transcript}
 
 {audio_context}
@@ -222,11 +224,12 @@ def format_window_prompt(
     )
 
     transcript = (
-        "TRANSCRIPT (with timestamps):\n"
+        "```transcript-with-timestamps\n"
         if addressing_mode == "timestamps" 
-        else "TRANSCRIPT (with indexes):\n"
+        else "```transcript-with-indexes\n"
     )
-    transcript += "\n".join(transcript_lines)
+    transcript += "\n".join(transcript_lines).replace("```", "\\`\\`\\`")
+    transcript += "\n```"
 
     return finalize_prompt(
         strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
