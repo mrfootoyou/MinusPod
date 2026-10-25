@@ -30,6 +30,10 @@ release notes.
   containing word-level timing into sentences. Parakeet uses it to assemble
   transcribed words into sentence-level text segments. Ad Detector uses it
   in various contexts via its `_timed_utterances()` function.
+- Transcriber converts chunked transcript into paragraph-like segments. The
+  result is about 3 times as many segments which are more coherent and readable.
+  While it is a lot more segments, it is far fewer than the 25-word
+  utterances previously sent to the LLM.
 
 - openapi.yaml carries a fixed placeholder version. The served spec already
   substitutes the running version from version.py, so the file no longer needs

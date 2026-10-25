@@ -945,6 +945,7 @@ def _split_segment_into_sentences(seg: TextSegmentLike,
                 'start': sentence[0].get('start'),
                 'end': sentence[-1].get('end'),
                 'words': sentence,
+                'word_timed_line': True,
                 'terminal': eos,
             })
             first_word = cur_word + 1
@@ -959,6 +960,7 @@ def _split_segment_into_sentences(seg: TextSegmentLike,
         'start': sentence[0].get('start'),
         'end': sentence[-1].get('end'),
         'words': sentence,
+        'word_timed_line': True,
         'terminal': _is_eos_word(sentence[-1]['word']),
     })
 

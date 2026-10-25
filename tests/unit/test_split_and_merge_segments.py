@@ -188,7 +188,7 @@ class TestSplitSegmentsIntoSentences:
 
         split_segments = split_segments_into_sentences(segments)
         assert len(split_segments) == 1
-        verify_text_segment(split_segments[0], 'Hello world.', terminal=True)
+        verify_text_segment(split_segments[0], 'Hello world.', terminal=True, word_timed_line=True)
 
     def test_splits_multi_sentence_segment(self):
         segments: list[TextSegmentLike] = [
@@ -214,6 +214,7 @@ class TestSplitSegmentsIntoSentences:
         verify_text_segment(split_segments[2], 'Is.', terminal=True)
         verify_text_segment(split_segments[3], 'A.', terminal=True)
         verify_text_segment(split_segments[4], 'Test.', terminal=True)
+        assert all(s.get('word_timed_line') == True for s in split_segments)
 
     def test_does_not_split_honorifics(self):
         segments: list[TextSegmentLike] = [
@@ -231,7 +232,7 @@ class TestSplitSegmentsIntoSentences:
 
         split_segments = split_segments_into_sentences(segments)
         assert len(split_segments) == 1
-        verify_text_segment(split_segments[0], 'Hello Mr. Turkey.', terminal=True)
+        verify_text_segment(split_segments[0], 'Hello Mr. Turkey.', terminal=True, word_timed_line=True)
 
     def test_does_not_split_midsentence_abbrev(self):
         segments: list[TextSegmentLike] = [
@@ -271,6 +272,7 @@ class TestSplitSegmentsIntoSentences:
         assert len(split_segments) == 2
         verify_text_segment(split_segments[0], 'Hello world.', terminal=True)
         verify_text_segment(split_segments[1], 'This is a test', terminal=False)
+        assert all(s.get('word_timed_line') == True for s in split_segments)
         assert all(s.get('interpolated') is None for s in split_segments)
 
     def test_interpolates_when_words_are_missing(self):
