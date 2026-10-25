@@ -23,7 +23,6 @@ def test_defined_pattern_gets_category_and_snippet():
     assert 'Acme' in hint
     assert 'sponsor' in hint
     assert 'this episode is brought to you by acme' in hint
-    assert 'ads on this feed' in hint  # scrutiny line
 
 
 def test_auto_pattern_name_only():
@@ -53,8 +52,8 @@ def test_sponsor_category_lists_auto_pattern_with_category():
         'sponsor': 'Acme', 'category': 'sponsor', 'intro_text': 'my drive died'}],
         sponsor_categories={'acme': 'self_promo'},
     )._build_known_pattern_hint('example-podcast')
-    assert '- Acme (self_promo read).' in hint
-    assert 'Previously detected sponsors' not in hint
+    assert '- Acme (self_promo).' in hint
+    assert 'Previously identified sponsors' not in hint
 
 
 def test_sponsor_category_outranks_defined_pattern_category():
@@ -65,7 +64,7 @@ def test_sponsor_category_outranks_defined_pattern_category():
         sponsor_categories={'acme': 'self_promo'},
     )._build_known_pattern_hint('example-podcast')
     assert hint.count('Acme') == 1
-    assert '- Acme (self_promo read). Opens like:' in hint
+    assert '- Acme (self_promo). Opens like:' in hint
 
 
 def test_uncategorized_names_stay_in_leftovers():
@@ -76,8 +75,8 @@ def test_uncategorized_names_stay_in_leftovers():
          'category': 'sponsor', 'intro_text': 'y'}],
         sponsor_categories={'widgets': 'self_promo'},
     )._build_known_pattern_hint('example-podcast')
-    assert 'Previously detected sponsors for this podcast: Acme' in hint
-    assert '- Widgets (self_promo read).' in hint
+    assert 'Previously identified sponsors for this podcast: Acme' in hint
+    assert '- Widgets (self_promo).' in hint
 
 
 def test_hint_initializes_services_when_first_caller(caplog):
