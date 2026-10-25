@@ -26,6 +26,10 @@ release notes.
   primarily to guarantee ordering and eliminate word-pairs ASAP.
 - Use `segments.join_word_segments()` to convert raw word lists into text,
   preventing misrendering of space-prefixed words.
+- Use `segments.split_segments_into_sentences()` to split text segments
+  containing word-level timing into sentences. Parakeet uses it to assemble
+  transcribed words into sentence-level text segments. Ad Detector uses it
+  in various contexts via its `_timed_utterances()` function.
 
 - openapi.yaml carries a fixed placeholder version. The served spec already
   substitutes the running version from version.py, so the file no longer needs
