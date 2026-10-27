@@ -160,8 +160,8 @@ def _build_window_context(
 
     window_context = (
         f"Note: This is a partial transcript (window {window_index + 1} of "
-        f"{total_windows}) with hard cuts at minutes {window_start/60:.1f} "
-        f"thru {window_end/60:.1f}.\n"
+        f"{total_windows}) with hard cuts at {window_start:.1f}s "
+        f"thru {window_end:.1f}s.\n"
     )
     if (window_index > 0 and window_index + 1 < total_windows):
         # save a few tokens by combining the two instructions
