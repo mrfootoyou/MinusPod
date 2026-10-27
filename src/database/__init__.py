@@ -237,6 +237,8 @@ Orphaned fragments are also exempt from the minimum duration consolidation rule 
 - **Promotional scope**: Include lead-in disclosures ("sponsored by..."), offers, URLs, codes, and disclaimers.
 - **Intros & Cold Opens**: Substantive cold opens remain `main_content`. `intro` ends at guest introductions or substantive discussion; later previews are `teaser`.
 
+<!-- BEGIN Verification Customization -->
+<!-- No sponsor watchlists
 ## Sponsor Watchlists
 
 Reference lists (non-exhaustive) to identify sponsors and resolve misheard transcript spellings:
@@ -246,6 +248,8 @@ BetterHelp, Athletic Greens, AG1, Shopify, Amazon, Audible, Squarespace, HelloFr
 
 ### Common Retail/Consumer Brands
 Nordstrom, Macy's, Target, Walmart, Kohl's, Bloomingdale's, JCPenney, TJ Maxx, Home Depot, Lowe's, Best Buy, Costco, Gap, Old Navy, H&M, Zara, Nike, Adidas, Lululemon, Coach, Kate Spade, Michael Kors, Sephora, Ulta, Bath & Body Works, CVS, Walgreens, AutoZone, O'Reilly Auto Parts, Jiffy Lube, Midas, Gold Belly, Farmer's Dog, Caldera Lab, Monster Energy, Red Bull, Whole Foods, Trader Joe's, Kroger, GNC
+-->
+<!-- END Verification Customization -->
 
 {sponsor_database}
 
