@@ -233,8 +233,8 @@ def format_window_prompt(
 
     return finalize_prompt(
         strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
-            podcast_name=podcast_name,
-            episode_title=episode_title,
+            podcast_name=re.sub(r"(?:\r?\n)+", ", ", podcast_name),
+            episode_title=re.sub(r"(?:\r?\n)+", ", ", episode_title),
             description_section=description_section,
             window_context=window_context,
             transcript=transcript,

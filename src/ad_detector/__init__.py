@@ -2069,13 +2069,13 @@ class AdDetector:
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section += f"Podcast Description:\n{podcast_description}\n\n"
+                description_section += f"Podcast Description:\n```\n{podcast_description.replace('```', '\\`\\`\\`')}\n```\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed podcast description ({len(podcast_description)} chars)")
             description_section += format_detection_notes_block(detection_notes)
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (may also list episode sponsors):\n{episode_description}\n\n"
+                description_section += f"Episode Description (may list sponsors):\n```\n{episode_description.replace('```', '\\`\\`\\`')}\n```\n\n"
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed episode description ({len(episode_description)} chars)")
 
             # Add podcast-specific known-pattern hint from ad_patterns
@@ -2618,10 +2618,10 @@ class AdDetector:
                     model = self.get_model()
                     kc_desc = ""
                     if podcast_description:
-                        kc_desc += f"Podcast Description:\n{podcast_description}\n\n"
+                        kc_desc += f"Podcast Description:\n```\n{podcast_description.replace('```', '\\`\\`\\`')}\n```\n\n"
                     kc_desc += format_detection_notes_block(detection_notes)
                     if episode_description:
-                        kc_desc += f"Episode Description:\n{episode_description}\n"
+                        kc_desc += f"Episode Description:\n```\n{episode_description.replace('```', '\\`\\`\\`')}\n```\n\n"
                     kc_live = live_route_params('detection')
                     inverted = self._detect_keep_content_ads(
                         segments, model=model, slug=slug, episode_id=episode_id,
@@ -3649,12 +3649,12 @@ class AdDetector:
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section += f"Podcast Description:\n{podcast_description}\n\n"
+                description_section += f"Podcast Description:\n```\n{podcast_description.replace('```', '\\`\\`\\`')}\n```\n\n"
             description_section += format_detection_notes_block(detection_notes)
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (may also list episode sponsors):\n{episode_description}\n\n"
+                description_section += f"Episode Description (may list sponsors):\n```\n{episode_description.replace('```', '\\`\\`\\`')}\n```\n\n"
 
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:
