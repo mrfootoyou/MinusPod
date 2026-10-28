@@ -98,9 +98,9 @@ class TestDetectTopicBoundariesPromptSize:
 
     def test_long_transcript_not_truncated(self):
         # 40,000 chars of transcript with a unique marker well past the 8k mark.
-        filler_before = 'a ' * 6000  # 12,000 chars
+        filler_before = ('a ' * 6000).rstrip()  # 12,000 chars
         marker = '[TAIL_MARKER_XYZ]'
-        filler_after = 'b ' * 10000  # 20,000 chars
+        filler_after = ('b ' * 10000).rstrip()  # 20,000 chars
         transcript = f'[00:00] start\n{filler_before}\n[60:00] {marker}\n{filler_after}'
         assert len(transcript) > 8000
 

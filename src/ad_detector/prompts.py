@@ -16,7 +16,7 @@ from sponsor_context import (SPONSOR_MIN_MENTIONS, framed_sponsor_names, registr
 from sponsor_service import SponsorService
 from text_pattern_matcher import bounded_segment_texts
 from utils.prompt import (
-    format_sponsor_block, render_prompt, strip_comments_from_prompt
+    finalize_prompt, format_sponsor_block, render_prompt, strip_comments_from_prompt
 )
 from utils.text import truncate
 from utils.time import parse_timestamp
@@ -178,12 +178,14 @@ def format_window_prompt(
             f"\n- If an ad extends past this window, use {window_end:.1f} with note \"continues in next\"\n"
         )
     window_context = header + rules
-    return strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
-        podcast_name=podcast_name,
-        episode_title=episode_title,
-        description_section=description_section,
-        transcript=transcript,
-    ) + audio_context + window_context
+    return finalize_prompt(
+        strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
+            podcast_name=podcast_name,
+            episode_title=episode_title,
+            description_section=description_section,
+            transcript=transcript,
+        ) + audio_context + window_context
+    )
 
 
 SEGMENT_ID_SYSTEM_SECTION = """

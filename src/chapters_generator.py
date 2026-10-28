@@ -10,7 +10,7 @@ from config import (
 )
 from database import Database, DEFAULT_CHAPTER_PROMPT
 from utils.prompt import (
-    render_prompt_once, apply_override, strip_html, strip_comments_from_prompt
+    finalize_prompt, render_prompt_once, apply_override, strip_html, strip_comments_from_prompt
 )
 from utils.time import parse_timestamp, adjust_timestamp, span_inside_any_cut
 from utils.text import extract_text_from_segments
@@ -350,6 +350,7 @@ class ChaptersGenerator:
         )
         if self._chapter_notes:
             prompt += f"\n\nFeed notes:\n{self._chapter_notes}"
+        prompt = finalize_prompt(prompt)
 
         try:
             live = live_route_params('chapters')

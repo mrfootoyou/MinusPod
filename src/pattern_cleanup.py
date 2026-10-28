@@ -37,6 +37,7 @@ from utils.llm_call import call_llm, schema_format_for
 from utils.llm_response import extract_json_object
 from utils.pattern_catalog import invalidate_pattern_catalog_scope
 from utils.pattern_similarity import canonicalize_for_dedupe, similarity
+from utils.prompt import finalize_prompt
 from utils.time import parse_iso_utc, utc_now, utc_now_iso
 
 logger = logging.getLogger('podcast.pattern_cleanup')
@@ -545,6 +546,8 @@ def review_pattern(pattern: dict, context: str | None, *, live: LiveRoute,
     """One LLM review of a pattern, validated; None when the answer is unusable."""
     if system_prompt is None:
         system_prompt = _system_prompt(Database())
+    system_prompt = finalize_prompt(system_prompt)
+
     response, error = call_llm(
         llm_client=client_for_route(live.route),
         model=live.model,
