@@ -69,7 +69,8 @@ from utils.markers import (
 )
 from utils.prompt import (
     format_sponsor_block, render_prompt, apply_override, seed_sponsors_enabled,
-    format_detection_notes_block, scrub_description, strip_comments_from_prompt
+    format_detection_notes_block, scrub_description, strip_comments_from_prompt,
+    finalize_prompt,
 )
 from utils.text import (
     BOUNDARY_SNAP_TOLERANCE_S,
@@ -2382,13 +2383,15 @@ class AdReviewer:
                 f"end must be within {max_shift} seconds of the "
                 f"original detected boundaries."
             )
-        return self._apply_pass_override(rendered, "review_prompt_override")
+        rendered = self._apply_pass_override(rendered, "review_prompt_override")
+        return finalize_prompt(rendered)
 
     def _render_resurrect_prompt(self, sponsor_block: str) -> str:
         prompt = self._read_setting("resurrect_prompt") or DEFAULT_RESURRECT_PROMPT
         prompt = strip_comments_from_prompt(prompt)
         rendered = render_prompt(prompt, sponsor_database=sponsor_block)
-        return self._apply_pass_override(rendered, "resurrect_prompt_override")
+        rendered = self._apply_pass_override(rendered, "resurrect_prompt_override")
+        return finalize_prompt(rendered)
 
     def _apply_pass_override(self, rendered: str, setting_key: str) -> str:
         """Append the user's per-pass override (empty by default -> no change)."""

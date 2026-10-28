@@ -53,7 +53,8 @@ from utils.markers import (
 )
 from utils.prompt import (
     format_sponsor_block, render_prompt, apply_override, seed_sponsors_enabled,
-    format_detection_notes_block, scrub_description, strip_comments_from_prompt
+    format_detection_notes_block, scrub_description, strip_comments_from_prompt,
+    finalize_prompt,
 )
 from utils.text import most_mentioned, truncate, word_boundary_re
 from utils.time import overlap_ratio, ranges_overlap
@@ -1140,7 +1141,8 @@ class AdDetector:
             prompt = f"{prompt}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
         if addressing_mode == 'segment_ids':
             prompt = f"{prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-        return f"{prompt}{AD_QUOTE_ANCHOR_SECTION}"
+        prompt = f"{prompt}{AD_QUOTE_ANCHOR_SECTION}"
+        return finalize_prompt(prompt)
 
     _HINT_TIER1_CAP = 12
     _HINT_SNIPPET_CHARS = 90
@@ -3550,6 +3552,7 @@ class AdDetector:
             if addressing_mode == 'segment_ids':
                 system_prompt = f"{system_prompt}{SEGMENT_ID_SYSTEM_SECTION}"
             system_prompt = f"{system_prompt}{AD_QUOTE_ANCHOR_SECTION}"
+            system_prompt = finalize_prompt(system_prompt)
             log_assembled_system_prompt(slug, episode_id, system_prompt,
                                         label="Verification system")
             model = self.get_verification_model()
