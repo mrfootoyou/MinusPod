@@ -922,6 +922,11 @@ SPONSOR_ALIAS_FIELD_DESCRIPTION = (
     "Fill at most one of the sponsor fields; omit them all otherwise."
 )
 
+# Cap on the schema's free-text fields. An enforcing decoder cannot otherwise
+# stop a model that starts repeating itself inside a string: gemma4 on Ollama
+# looped a sponsor alias until max_tokens and the window's JSON never closed.
+AD_SCHEMA_TEXT_MAX_CHARS = 300
+
 AD_DETECTION_JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -932,17 +937,17 @@ AD_DETECTION_JSON_SCHEMA = {
                 "properties": {
                     "start": {"type": "number"},
                     "end": {"type": "number"},
+                    "start_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
+                    "end_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
                     "category": {
                         "type": "string",
                         "enum": list(SEGMENT_CATEGORIES) + ["main_content", "teaser", "transition"]
                     },
+                    "reason": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
+                    "sponsor_name": {"type": ["string", "null"], "maxLength": SPONSOR_MAX_NAME_CHARS},
                     "confidence": {"type": "number"},
-                    "reason": {"type": ["string", "null"]},
-                    "sponsor_name": {"type": ["string", "null"]},
-                    "start_text": {"type": ["string", "null"]},
-                    "end_text": {"type": ["string", "null"]},
                 },
-                "required": ["start", "end", "category", "confidence", "reason", "start_text", "end_text", "sponsor_name"],
+                "required": ["start", "end", "start_text", "end_text", "category", "reason", "sponsor_name", "confidence"],
                 "additionalProperties": False,
             },
         },
@@ -951,39 +956,9 @@ AD_DETECTION_JSON_SCHEMA = {
     "additionalProperties": False,
 }
 
-# Cap on the schema's free-text fields. An enforcing decoder cannot otherwise
-# stop a model that starts repeating itself inside a string: gemma4 on Ollama
-# looped a sponsor alias until max_tokens and the window's JSON never closed.
-AD_SCHEMA_TEXT_MAX_CHARS = 300
-
-
-def _mode_detection_schema(addressing_mode: str) -> dict:
-    """The detection schema for one addressing mode, for enforcing decoders.
-
-    An enforcing decoder such as Ollama's ``format`` emits an optional field
-    only when the model picks it, and gemma4 picked sponsor aliases over
-    category, reason and end_text, so the validator rejected real ads. This
-    marks the fields the prompt requires as required for ``addressing_mode``
-    and caps free text; AD_DETECTION_JSON_SCHEMA itself stays all-optional.
-    """
-    schema = copy.deepcopy(AD_DETECTION_JSON_SCHEMA)
-    item = schema["properties"]["ads"]["items"]
-    for name, spec in item["properties"].items():
-        if spec["type"] == "string" and "enum" not in spec:
-            spec["maxLength"] = (SPONSOR_MAX_NAME_CHARS if name in SPONSOR_PRIORITY_FIELDS
-                                 else AD_SCHEMA_TEXT_MAX_CHARS)
-    edges = (["start_id", "end_id"] if addressing_mode == "segment_ids"
-             else ["start", "end"])
-    item["required"] = edges + ["start_text", "end_text", "category", "confidence", "reason"]
-    return schema
-
-
-# Built once; callers pass these through unchanged, like AD_DETECTION_JSON_SCHEMA.
-_MODE_DETECTION_SCHEMAS = {mode: _mode_detection_schema(mode) for mode in ("timestamps", "segment_ids")}
-
 
 def ad_detection_json_schema(addressing_mode: str) -> dict:
-    return _MODE_DETECTION_SCHEMAS["segment_ids" if addressing_mode == "segment_ids" else "timestamps"]
+    return AD_DETECTION_JSON_SCHEMA
 
 
 # Small fixed budget: the repair call only ever emits a short JSON array,
