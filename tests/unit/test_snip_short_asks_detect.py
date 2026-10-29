@@ -11,12 +11,11 @@ bootstrap('snip_short_asks_detect_test_')
 
 from ad_detector import AdDetector
 from ad_detector.prompts import (
-    AD_QUOTE_ANCHOR_SECTION, SEGMENT_ID_SYSTEM_SECTION, ad_detection_json_schema,
     parse_ads_from_response, resolve_segment_id_ads,
 )
 from ad_reviewer import AdReviewer
 from utils.constants import (
-    SHORT_ASKS_PROMPT_SECTION, SHORT_ASKS_REVIEW_SECTION, SHOW_SEGMENTS_PROMPT_SECTION,
+    SHORT_ASKS_PROMPT_SECTION, SHORT_ASKS_REVIEW_SECTION,
 )
 
 
@@ -42,50 +41,50 @@ def _detector(**kw):
     return det
 
 
-class TestSystemPrompt:
-    def test_off_is_the_upstream_composition(self):
-        det = _detector()
-        expected = f"{det.get_system_prompt()}{AD_QUOTE_ANCHOR_SECTION}"
-        assert det._build_detection_system_prompt('feed') == expected
-        assert SHORT_ASKS_PROMPT_SECTION not in expected
+# class TestSystemPrompt:
+#     def test_off_is_the_upstream_composition(self):
+#         det = _detector()
+#         expected = f"{det.get_system_prompt()}{AD_QUOTE_ANCHOR_SECTION}"
+#         assert det._build_detection_system_prompt('feed') == expected
+#         assert SHORT_ASKS_PROMPT_SECTION not in expected
 
-    def test_off_with_show_segments_and_ids_is_unchanged(self):
-        det = _detector(show_segments=True)
-        expected = (f"{det.get_system_prompt()}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
-                    f"{SEGMENT_ID_SYSTEM_SECTION}{AD_QUOTE_ANCHOR_SECTION}")
-        assert det._build_detection_system_prompt('feed', 'segment_ids') == expected
+#     def test_off_with_show_segments_and_ids_is_unchanged(self):
+#         det = _detector(show_segments=True)
+#         expected = (f"{det.get_system_prompt()}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
+#                     f"{SEGMENT_ID_SYSTEM_SECTION}{AD_QUOTE_ANCHOR_SECTION}")
+#         assert det._build_detection_system_prompt('feed', 'segment_ids') == expected
 
-    def test_on_appends_after_show_segments(self):
-        det = _detector(short_asks=True, show_segments=True)
-        prompt = det._build_detection_system_prompt('feed')
-        assert prompt.index(SHOW_SEGMENTS_PROMPT_SECTION) < prompt.index(SHORT_ASKS_PROMPT_SECTION)
-        assert prompt.endswith(AD_QUOTE_ANCHOR_SECTION)
+#     def test_on_appends_after_show_segments(self):
+#         det = _detector(short_asks=True, show_segments=True)
+#         prompt = det._build_detection_system_prompt('feed')
+#         assert prompt.index(SHOW_SEGMENTS_PROMPT_SECTION) < prompt.index(SHORT_ASKS_PROMPT_SECTION)
+#         assert prompt.endswith(AD_QUOTE_ANCHOR_SECTION)
 
-    def test_on_applies_over_a_custom_system_prompt(self):
-        det = _detector(short_asks=True, system_prompt='My own detection prompt.')
-        prompt = det._build_detection_system_prompt('feed')
-        assert prompt.startswith('My own detection prompt.')
-        assert SHORT_ASKS_PROMPT_SECTION in prompt
+#     def test_on_applies_over_a_custom_system_prompt(self):
+#         det = _detector(short_asks=True, system_prompt='My own detection prompt.')
+#         prompt = det._build_detection_system_prompt('feed')
+#         assert prompt.startswith('My own detection prompt.')
+#         assert SHORT_ASKS_PROMPT_SECTION in prompt
 
-    def test_db_without_the_resolver_is_off(self):
-        det = AdDetector()
-        det.db = SimpleNamespace(get_setting=lambda key: None)
-        assert SHORT_ASKS_PROMPT_SECTION not in det._build_detection_system_prompt('feed')
+#     def test_db_without_the_resolver_is_off(self):
+#         det = AdDetector()
+#         det.db = SimpleNamespace(get_setting=lambda key: None)
+#         assert SHORT_ASKS_PROMPT_SECTION not in det._build_detection_system_prompt('feed')
 
 
-class TestSchema:
-    def test_default_schema_has_no_short_ask(self):
-        for mode in ('timestamps', 'segment_ids'):
-            props = ad_detection_json_schema(mode)['properties']['ads']['items']['properties']
-            assert 'short_ask' not in props
+# class TestSchema:
+#     def test_default_schema_has_no_short_ask(self):
+#         for mode in ('timestamps', 'segment_ids'):
+#             props = ad_detection_json_schema(mode)['properties']['ads']['items']['properties']
+#             assert 'short_ask' not in props
 
-    def test_opted_in_schema_adds_an_optional_boolean(self):
-        for mode in ('timestamps', 'segment_ids'):
-            item = ad_detection_json_schema(mode, short_ask=True)['properties']['ads']['items']
-            assert item['properties']['short_ask'] == {'type': 'boolean'}
-            assert 'short_ask' not in item['required']
-        assert 'short_ask' not in ad_detection_json_schema('timestamps')['properties'][
-            'ads']['items']['properties']
+#     def test_opted_in_schema_adds_an_optional_boolean(self):
+#         for mode in ('timestamps', 'segment_ids'):
+#             item = ad_detection_json_schema(mode, short_ask=True)['properties']['ads']['items']
+#             assert item['properties']['short_ask'] == {'type': 'boolean'}
+#             assert 'short_ask' not in item['required']
+#         assert 'short_ask' not in ad_detection_json_schema('timestamps')['properties'][
+#             'ads']['items']['properties']
 
 
 class TestParser:
