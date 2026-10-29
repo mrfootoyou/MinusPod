@@ -204,8 +204,7 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 4. **Resolve promotions**: Identify beneficiary (`sponsor`, `cross_promo`, `self_promo`) and correct names using metadata and watchlists.
 5. **Consolidate**: Merge adjacent same-category non-promotional segments < ~5s. Keep promotional segments separate even if contiguous.
 6. **Filter**: Omit `main_content` from output; callers reconstruct it from gaps.
-7. **Extract boundary text**: Quote up to 6 words (~30 characters) marking exact segment edges within the boundary cues.
-8. **Output**: Return a valid JSON object matching the schema.
+7. **Output**: Return a valid JSON object matching the schema.
 
 <!-- BEGIN Verification Customization -->
 **Note**: Orphaned fragments may be especially difficult to classify accurately. Do your best and know that correctly identified orphaned fragments will be merged with their parent segment, making classification less critical.
@@ -233,7 +232,7 @@ Orphaned fragments are also exempt from the minimum duration consolidation rule 
 - **Conservative clipping**: Bound non-main segments narrowly. When edges are blurry, err toward keeping audio in `main_content`.
 - **Cue spans (`start`/`end`)**: Must cover the full cue span containing the segment. Use the first cue's start time/index and the last cue's end time/index. Do not interpolate.
 - **Mid-cue overlap**: If a cue contains boundaries between multiple segments, include that cue in the span of every segment it overlaps.
-- **Boundary quotes (`start_text`/`end_text`)**: Quote up to 6 words (~30 characters) marking the exact segment edge inside the boundary cue. Use `""` if the cue text is empty.
+- **Mid-cue boundary quotes (`start_text`/`end_text`)**: If the segment begins or ends mid-cue, then quote the first 6 and last 6 words of the segment text. If there are fewer than 6 words, quote all available. A 'word' is strictly defined as an alphanumeric sequence (`[^\W_]+`). Ex: "10,000 B.C. is pre-history" = 7 words.
 - **Promotional scope**: Include lead-in disclosures ("sponsored by..."), offers, URLs, codes, and disclaimers.
 - **Intros & Cold Opens**: Substantive cold opens remain `main_content`. `intro` ends at guest introductions or substantive discussion; later previews are `teaser`.
 
@@ -262,8 +261,8 @@ Return only a valid, compact JSON object with no Markdown wrappers or commentary
     {
       "start": number,
       "end": number,
-      "start_text": string,
-      "end_text": string,
+      "start_text": string or null,
+      "end_text": string or null,
       "category": "intro | outro | interaction | teaser | recap | transition | sponsor | cross_promo | self_promo",
       "reason": string,
       "sponsor_name": string or null,
@@ -275,7 +274,7 @@ Return only a valid, compact JSON object with no Markdown wrappers or commentary
 ### Field Notes
 
 - `start`, `end`: Full cue boundary timestamps or indices (no interpolation).
-- `start_text`, `end_text`: Exact boundary text (≤6 words, ~30 chars).
+- `start_text`, `end_text`: Exact boundary text (up to 6 words) iif the segment begins or ends mid-cue; `null` otherwise.
 - `reason`: Brief classification rationale.
 - `sponsor_name`: Canonical brand/offering for promotional segments; `null` otherwise.
 - `confidence`: Lowest-certainty component score (category, boundary, sponsor). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
@@ -295,8 +294,8 @@ Output:
     {
       "start": 195.0,
       "end": 198.6,
-      "start_text": "Visit Acme dot com to get started",
-      "end_text": "Acme dot com to get started today.",
+      "start_text": "Visit Acme dot com to get",
+      "end_text": "dot com to get started today.",
       "category": "sponsor",
       "reason": "Appears to be a leftover ad fragment",
       "sponsor_name": "Acme",
@@ -306,7 +305,7 @@ Output:
 }
 ```
 
-Notice how `start` and `end` capture the full cue span, while `start_text` and `end_text` pinpoint text boundaries within the start and end cues. The texts overlap in this example because the ad fragment is short. Confidence is on the low end because it appears to be a fragment.
+Notice how `start` and `end` capture the full cue span, while `end_text` pinpoints the exact mid-cue boundary. `start_text` is non-null because `end_text` is non-null (they're a pair). Confidence is on the low end because it appears to be a fragment.
 """.strip()
 
 

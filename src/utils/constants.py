@@ -1199,8 +1199,7 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 4. **Resolve promotions**: Identify beneficiary (`sponsor`, `cross_promo`, `self_promo`) and correct names using metadata and watchlists.
 5. **Consolidate**: Merge adjacent same-category non-promotional segments < ~5s. Keep promotional segments separate even if contiguous.
 6. **Filter**: Omit `main_content` from output; callers reconstruct it from gaps.
-7. **Extract boundary text**: Quote up to 6 words (~30 characters) marking exact segment edges within the boundary cues.
-8. **Output**: Return a valid JSON object matching the schema.
+7. **Output**: Return a valid JSON object matching the schema.
 
 ## Categories
 
@@ -1222,7 +1221,7 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 - **Conservative clipping**: Bound non-main segments narrowly. When edges are blurry, err toward keeping audio in `main_content`.
 - **Cue spans (`start`/`end`)**: Must cover the full cue span containing the segment. Use the first cue's start time/index and the last cue's end time/index. Do not interpolate.
 - **Mid-cue overlap**: If a cue contains boundaries between multiple segments, include that cue in the span of every segment it overlaps.
-- **Boundary quotes (`start_text`/`end_text`)**: Quote up to 6 words (~30 characters) marking the exact segment edge inside the boundary cue. Use `""` if the cue text is empty.
+- **Mid-cue boundary quotes (`start_text`/`end_text`)**: If the segment begins or ends mid-cue, then quote the first 6 and last 6 words of the segment text. If there are fewer than 6 words, quote all available. A 'word' is strictly defined as an alphanumeric sequence (`[^\W_]+`). Ex: "10,000 B.C. is pre-history" = 7 words.
 - **Promotional scope**: Include lead-in disclosures ("sponsored by..."), offers, URLs, codes, and disclaimers.
 - **Intros & Cold Opens**: Substantive cold opens remain `main_content`. `intro` ends at guest introductions or substantive discussion; later previews are `teaser`.
 
@@ -1247,8 +1246,8 @@ Return only a valid, compact JSON object with no Markdown wrappers or commentary
     {
       "start": number,
       "end": number,
-      "start_text": string,
-      "end_text": string,
+      "start_text": string or null,
+      "end_text": string or null,
       "category": "intro | outro | interaction | teaser | recap | transition | sponsor | cross_promo | self_promo",
       "reason": string,
       "sponsor_name": string or null,
@@ -1260,7 +1259,7 @@ Return only a valid, compact JSON object with no Markdown wrappers or commentary
 ### Field Notes
 
 - `start`, `end`: Full cue boundary timestamps or indices (no interpolation).
-- `start_text`, `end_text`: Exact boundary text (≤6 words, ~30 chars).
+- `start_text`, `end_text`: Exact boundary text (up to 6 words) iif the segment begins or ends mid-cue; `null` otherwise.
 - `reason`: Brief classification rationale.
 - `sponsor_name`: Canonical brand/offering for promotional segments; `null` otherwise.
 - `confidence`: Lowest-certainty component score (category, boundary, sponsor). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
@@ -1270,7 +1269,7 @@ Return only a valid, compact JSON object with no Markdown wrappers or commentary
 Input transcript:
 ```
 [192.3-197.8] We'll get back to the interview in a moment. This episode is sponsored by Acme Coffee.
-[198.0-203.1] Visit acme.example today to get 20% off your first order. Now, Maya, what did the team discover?
+[198.0-200.6] Visit acme.example today to get 20% off your first order.
 ```
 
 Output:
@@ -1279,8 +1278,8 @@ Output:
   "segments": [
     {
       "start": 192.3,
-      "end": 203.1,
-      "start_text": "This episode is sponsored by",
+      "end": 200.6,
+      "start_text": "This episode is sponsored by Acme",
       "end_text": "get 20% off your first order.",
       "category": "sponsor",
       "reason": "Sustained audience-directed product promotion",
@@ -1291,7 +1290,7 @@ Output:
 }
 ```
 
-Notice how `start` and `end` capture the full cue span, while `start_text` and `end_text` pinpoint text boundaries within the start and end cues.
+Notice how `start` and `end` capture the full cue span, while `start_text` pinpoints the exact mid-cue boundary. `end_text` is non-null because `start_text` is non-null (they're a pair).
 """.strip()
 
 # Opt-in addition to DEFAULT_SYSTEM_PROMPT (issue #565): appended only when
