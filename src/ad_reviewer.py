@@ -93,17 +93,18 @@ AD_REVIEW_JSON_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "is_ad": {"type": "boolean"},
-                    "start": {"type": "number"},
-                    "end": {"type": "number"},
-                    "confidence": {"type": "number"},
+                    "start": {"type": ["number", "null"]},
+                    "end": {"type": ["number", "null"]},
                     "reason": {"type": "string"},
+                    "confidence": {"type": "number"},
                 },
-                # An explicit reject carries only these two.
-                "required": ["is_ad", "reason"],
+                "required": ["is_ad", "start", "end", "reason", "confidence"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["ads"],
+    "additionalProperties": False,
 }
 
 logger = logging.getLogger(__name__)
@@ -356,6 +357,7 @@ TRIM_RECOVERY_JSON_SCHEMA = {
         "ad_end": {"type": ["number", "null"]},
     },
     "required": ["ad_start", "ad_end"],
+    "additionalProperties": False,
 }
 
 
