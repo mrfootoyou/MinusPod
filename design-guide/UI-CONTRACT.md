@@ -1,6 +1,6 @@
 # UI behavior and review contract
 
-Reviewed: 2026-10-23. Applies to desktop, phone, and tablet interfaces.
+Reviewed: 2026-10-30. Applies to desktop, phone, and tablet interfaces.
 
 The HTML guide contains visual examples. Production components own behavior. Change a shared component when a rule applies across screens; do not patch each caller with a different recipe.
 
@@ -15,7 +15,7 @@ The HTML guide contains visual examples. Production components own behavior. Cha
 | Page tabs | `PageTabs.tsx` | Arrows, Home/End, selected state, panel relationship |
 | Async failures | `QueryError.tsx` and query consumers | Failed requests cannot render an empty-success claim |
 | Drafts and updates | `useUnsavedChanges.ts`, `App.tsx`, `main.tsx` | Navigation, unload, pull-to-refresh, explicit update application |
-| Browser contracts | `frontend/e2e/ui-contract.spec.ts` | `npm run test:browser` |
+| Browser contracts | `frontend/e2e/ui-contract.spec.ts`, `frontend/e2e/populated-ui.spec.ts` | `npm run test:browser` |
 
 Run these commands from `frontend`. The guide's theme catalog and default tokens are generated from application source. CI fails when the generated values differ. Static HTML examples are illustrations, not substitutes for exercising the React components.
 
@@ -63,6 +63,34 @@ There is no `<Button>` component. Recipes are class strings composed at the call
 - Dialog footers with 3 or more actions keep their text labels at every width. Below 360 CSS px they become two equal columns in two rows, and from 360 to 639 px one row of equal-width columns (dialogFooterGrid), so nothing is icon-only. PatternDetailModal is the reference.
 - Inline link-style actions (`text-primary hover:underline`, "Show full match") and selected-state toggles (`PageTabs`, `SegmentedToggle`, pagination numbers) are intentionally not button recipes.
 
+### Media player
+
+`EpisodePlayer` (with `useEpisodePlayer`) is the one episode audio player. Reuse it; do not add a second player or restyle the native `<audio>` element.
+
+- Layout, top to bottom: chapter row (only when the episode has chapters), scrubber, time row, transport row.
+- Chapter row: `ChevronLeft` and `ChevronRight` ghost buttons around the current chapter title, truncated and centered. Previous and next disable at the first and last chapter.
+- Scrubber: a range input with a tick at each chapter start after 0. Elapsed time sits left and remaining time right as `-m:ss` (`formatTimestamp`).
+- Transport: back 15 seconds, play or pause, forward 30 seconds. Center this group independently of speed. Below 336 CSS px of container content width, put speed on a second centered row. At wider sizes, place it at the right edge. Keep the Gauge icon visible at every width.
+- Icons: `RotateCcw` and `RotateCw` at 32 px with the seconds number centered inside the circle, `Play` and `Pause` at 24 px, chapter chevrons at 20 px.
+
+| Control | Recipe | Size |
+| --- | --- | --- |
+| Play and pause | `${btnBase} ${btnPrimary}` as a filled circle (`rounded-full`) | 56 px at every width |
+| Back and forward | `${btnBase} ${btnGhost} ${touchTarget}` with `h-11 w-11 shrink-0 px-0` | 44 x 44 CSS px at every width |
+| Speed and chapter chevrons | `${btnBase} ${btnGhost} ${touchTarget}` | 44 px on coarse pointers, 32 px tall on desktop with a fine pointer |
+| Container | `@container rounded-lg border border-border bg-card` with `focusRing`, `tabIndex={0}`, `role="group"` | `p-3`, `p-4` from sm |
+| Seek range | 44 px tall hit box, `focusRing` | Full width |
+
+- Previous chapter restarts the current chapter when the playhead is more than 3 s into it; otherwise it goes to the previous chapter.
+- Speed cycles 1x, 1.25x, 1.5x, 1.75x, 2x, 0.8x and wraps. The choice persists under the `minuspod.playbackRate` localStorage key and applies to every episode.
+- With focus on the player container, Space toggles play and Left and Right skip back 15 and forward 30 seconds. Ignore controls, editable content, repeated keys, composition, modifiers, and handled events.
+- The scrubber seeks on release. The time row and chapter title follow the drag; commit on pointer up, key up, or blur. Pointer cancellation discards the preview.
+- Disable seek, skip, and chapter navigation until duration is known. Use "-" for unknown remaining time. Reset the timeline when the media source empties.
+- Announce buffering as "Loading audio...". Failed media shows "Could not play this audio." and Retry playback. Chapter failures have their own Retry chapters action without restarting audio.
+- Check every speed at narrow widths, especially 1.75x. Measure control bounds against the player, not just the document width. The play button stays on the container's center line.
+- The episode description sits under the player in `ExpandableText` with `toggleText` "Show more" and "Show less". The control appears only when the text overflows.
+- Focusing a link inside collapsed rich text expands it and scrolls the link into view. Keyboard focus must never remain on clipped content.
+
 ### Shared field, badge, and component recipes
 
 - Fields: `inputBase`, `selectBase`, and `textareaBase` share one chrome (4 px radius, `bg-background`, `border-input`, `text-foreground`) and inputs and selects share one 40 px minimum height. Textareas size by rows. `labelBase` is the form label; `filterLabel` stays the muted label in filter rows.
@@ -80,6 +108,7 @@ There is no `<Button>` component. Recipes are class strings composed at the call
 - A held marker is "Needs review" (badge, filter option, row label). The episode page section is "Held for review (n)". Cleanup suggestions keep "Pending".
 - "Confirm" and "Not ad" are the only marker decisions. "Approve" and "Reject" apply only to cleanup suggestions.
 - Re-running detection is "Re-detect ads". The full pipeline is "Full reprocess".
+- Use `reprocessMenuCopy` for episode and feed menus. YouTube actions describe SponsorBlock, patterns, captions, and the configured fallback. They must not promise an RSS-only AI pass.
 - A nav label equals the page `h1`: "Feeds", "Add feed", "Patterns". Back links read "Back to feeds".
 - A destructive confirm button repeats the verb and noun ("Delete pattern", "Delete 3 episodes") under a sentence-case question title ("Delete 3 episodes?"), not "Yes, delete".
 - Adding is "Add <noun>" with the lucide Plus icon and no typed "+"; the pending state keeps the verb ("Adding feed..."). "Create" is only for objects the app generates.
@@ -105,6 +134,10 @@ There is no `<Button>` component. Recipes are class strings composed at the call
 Associate visible labels with control IDs. Link help and validation with `aria-describedby`; expose invalid fields with `aria-invalid`. `NumberInput`, `DraftNumberInput`, and `TriStateSelect` forward `ariaDescribedBy`. An alert elsewhere in a form does not replace a field association.
 
 Use a polite status announcement for successful saves and copies. Use an alert for errors requiring attention. Export and clipboard failures need visible feedback. A failure reason cannot exist only in a `title` tooltip; use readable text or a disclosure.
+
+YouTube overrides wait for global settings before displaying inherited values. A failed query shows Retry, never an assumed "off" value. Numeric overrides show units and reject values outside the server's integer bounds. An explicit custom value may equal the current global value.
+
+Add feed names RSS and YouTube in its input label. Advanced options apply to either source. Discard lookup results when the input changes, even if an aborted request later resolves.
 
 ## Dialogs and keyboard
 
@@ -137,6 +170,8 @@ Each section states when its values are committed:
 
 Keep independently saved drafts mounted when sections collapse. A query refresh must update clean values without replacing edited values. Clear a draft only after its save succeeds, and prevent edits while a save will replace the form. Compare values with their saved baseline so reverting an edit removes the guard.
 
+Feed metadata has Save metadata and Cancel actions. Show success beside the stable save label. Artwork uploads announce pending, success, and failure states. Disable conflicting operations while requests run, including cookie save/clear, key save/test, and settings save/reset.
+
 Register unsaved state with `useUnsavedChanges` so router navigation, unload, pull-to-refresh, and app updates respect it. The global Save Changes button does not save independent sections. New independently saved sections must register their own drafts. `useDraftClose` handles explicit discard decisions in editors.
 
 A service-worker update waits for the user's Reload to update action. Disable that action while registered drafts exist. A hidden tab is not proof that its work is saved.
@@ -150,6 +185,7 @@ Feed deletion, resets, and replace-mode imports use `ConfirmModal`. Name the obj
 - Card and section titles use `cardTitle` (18 CSS px, 600) and sub-headings use `subHeading` (14 CSS px, 600), always `text-foreground`. Data cards pad with `cardPad` (16 CSS px) and section cards with `sectionPad` (24 CSS px).
 - Use one visible page `h1` at 24 CSS px, section headings at 18 CSS px, and consistent summary-card labels/values. Keep numeric column headings aligned with their values.
 - Use `pageHeader`, `pageTitle`, and `pageDescription`: 24 CSS px titles, 16 CSS px header gaps, 24 CSS px bottom spacing, and actions below the title on phones.
+- Episode header: metadata chips sit on one non-wrapping line and the action buttons on their own non-wrapping line. Compact the chips or buttons only below 361 CSS px.
 - Counter cards place the value above the label, left aligned. Metric cards place the label above the value and may add details. Both use 20 CSS px bold tabular values, 12 CSS px labels, and 16 CSS px outer padding. Metrics nested within a larger card may share its surface.
 - Summary cards in the same row align their values and label starts, including clickable cards. Use an explicit shared layout; native button centering must not shift content when a neighboring label wraps.
 - Layer order: sticky navigation 30, ordinary popovers and save bars 40, status bar 50, dialogs 60, dialog-owned popovers 70. Nested dialogs follow DOM order within the dialog layer.
@@ -160,6 +196,10 @@ Feed deletion, resets, and replace-mode imports use `ConfirmModal`. Name the obj
 
 A UI PR includes affected routes, widths, input modes, and before/after images from the real components. State whether it used actual records, failed requests, or proposals. Never present an edited screenshot as an implemented screen.
 
-CI runs type checking, lint, unit tests, guide parity, and browser contracts. The browser suite runs Chromium and WebKit at 320, 390, 768, and 1440 CSS px. It uses an unavailable backend for failure flows and checks accessible form names with axe. Set `MINUSPOD_POPULATED_URL` to a disposable instance URL ending in `/ui` to include the populated editor checks; CI skips those checks. Populated layouts require a local dataset and must not publish backup databases, credentials, subscriber addresses, or private configuration.
+CI runs type checking, lint, unit tests, guide parity, and browser contracts. The browser suite runs Chromium and WebKit at 320, 390, 768, and 1440 CSS px. It uses an unavailable backend for failure flows and checks accessible form names with axe.
+
+Set `MINUSPOD_POPULATED_URL` to a disposable instance URL ending in `/ui` for populated editor, player, and YouTube checks. Set `MINUSPOD_STORAGE_STATE` to a local Playwright authentication-state file when login is required. These checks use existing records, including a YouTube feed with a completed episode; CI skips them without a populated instance.
+
+Keep backups, authentication state, subscriber addresses, and private configuration out of commits and published evidence. A database-only restore cannot verify successful audio playback. Abort missing-media requests during layout checks because requesting a missing processed file can enqueue processing. Record that limitation separately from layout and error-state results.
 
 Record exceptions with the affected control, reason, owner, and follow-up issue. Browser emulation does not replace physical iOS checks for keyboards, safe areas, VoiceOver, or installed PWA updates.

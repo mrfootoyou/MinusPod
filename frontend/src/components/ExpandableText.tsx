@@ -18,6 +18,8 @@ interface ExpandableTextProps {
   className?: string;
   /** Label for the control; the noun makes it clear what expands. */
   label?: string;
+  /** Replace the "Show full <label>" / "Show less <label>" button text. */
+  toggleText?: { more: string; less: string };
 }
 
 /**
@@ -26,7 +28,7 @@ interface ExpandableTextProps {
  * The control only appears when the text actually overflows, so short entries
  * stay a plain paragraph with nothing extra to read past.
  */
-function ExpandableText({ children, clampLines = 4, className, label = 'text' }: ExpandableTextProps) {
+function ExpandableText({ children, clampLines = 4, className, label = 'text', toggleText }: ExpandableTextProps) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -42,6 +44,13 @@ function ExpandableText({ children, clampLines = 4, className, label = 'text' }:
 
   useLayoutEffect(measure, [measure, children]);
 
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (expanded && active instanceof HTMLElement && ref.current?.contains(active)) {
+      active.scrollIntoView({ block: 'nearest' });
+    }
+  }, [expanded]);
+
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return;
     const el = ref.current;
@@ -55,7 +64,8 @@ function ExpandableText({ children, clampLines = 4, className, label = 'text' }:
 
   return (
     <div className={className}>
-      <div id={bodyId} ref={ref} className={`wrap-break-word ${clamp}`.trim()}>
+      <div id={bodyId} ref={ref} className={`wrap-break-word ${clamp}`.trim()}
+        onFocusCapture={() => { if (overflows) setExpanded(true); }}>
         {children}
       </div>
       {(overflows || expanded) && (
@@ -66,7 +76,7 @@ function ExpandableText({ children, clampLines = 4, className, label = 'text' }:
           aria-controls={bodyId}
           className={`mt-1 text-xs text-primary hover:underline ${focusRing}`}
         >
-          {expanded ? `Show less ${label}` : `Show full ${label}`}
+          {expanded ? (toggleText?.less ?? `Show less ${label}`) : (toggleText?.more ?? `Show full ${label}`)}
         </button>
       )}
     </div>

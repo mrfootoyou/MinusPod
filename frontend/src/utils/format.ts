@@ -4,7 +4,9 @@
 // Clock-style timestamp: `H:MM:SS` at or above one hour, else `M:SS`. Integer
 // seconds (each field floored). Used for audio positions (cue rows, ad
 // boundaries) and, via settingsUtils.formatDuration, episode-length durations.
+// NaN, Infinity and negatives read 0:00.
 export function formatTimestamp(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);

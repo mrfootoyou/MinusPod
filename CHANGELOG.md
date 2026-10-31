@@ -11,6 +11,30 @@ release notes.
 
 ## [Unreleased]
 
+## [2.101.9] - 2026-10-30
+
+### Fixed
+
+- Episode player controls stay centered and fit narrow screens at every playback speed. Audio and chapter failures offer retry actions, and seeking waits for media metadata.
+- Collapsed episode descriptions expand when a link receives keyboard focus, so focused links remain visible.
+- YouTube settings show failed loads and field errors, preserve unsaved edits, and prevent overlapping saves, resets, cookie changes, and key tests.
+- Feed metadata survives background refreshes. Artwork uploads report progress and errors. Numeric YouTube overrides validate their bounds and save explicit values that match the global default.
+- YouTube feed creation honors advanced feed options, discards stale lookup results, and uses source-specific reprocessing descriptions.
+
+### Changed
+
+- The design guide documents responsive player controls, independent drafts, failure states, and browser checks with restored data. Button and detection-card examples match the shared recipes.
+
+## [2.101.8] - 2026-10-30
+
+### Added
+
+- The episode page has a built-in audio player with chapter navigation and the current chapter title, skip back 15 s and forward 30 s, playback speed remembered per browser, and keyboard shortcuts. The episode description now sits under the player and collapses to a few lines with a Show more button.
+
+### Changed
+
+- lucide-react 1.62.0.
+
 ## [2.101.7] - 2026-10-30
 
 ### Fixed

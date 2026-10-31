@@ -22,6 +22,8 @@ import { subHeading } from '../../components/pageStyles';
 import { formatDateTime } from '../../utils/format';
 import SavedBadge from './SavedBadge';
 import ConfirmResetButton from './ConfirmResetButton';
+import QueryError from '../../components/QueryError';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 type NumberField = keyof YouTubeSettings['bounds'];
 
@@ -35,7 +37,7 @@ const NUMBER_ROWS: { field: NumberField; label: string }[] = [
 
 function YouTubeSection() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({ queryKey: ['youtubeSettings'], queryFn: getYouTubeSettings });
+  const { data, isPending, isError, isFetching, refetch } = useQuery({ queryKey: ['youtubeSettings'], queryFn: getYouTubeSettings });
 
   const [keyDraft, setKeyDraft] = useState('');
   const [cookiesDraft, setCookiesDraft] = useState('');
@@ -44,8 +46,11 @@ function YouTubeSection() {
   const [cookiesError, setCookiesError] = useState<string | null>(null);
   const [argsDraft, setArgsDraft] = useState<string | null>(null);
   const [proxyDraft, setProxyDraft] = useState<string | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<{ field: 'proxyUrl' | 'ytdlpExtraArgs' | null; message: string } | null>(null);
   const [updateNote, setUpdateNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useUnsavedChanges(!!keyDraft || !!cookiesDraft
+    || (argsDraft !== null && argsDraft.trim() !== data?.ytdlpExtraArgs)
+    || (proxyDraft !== null && proxyDraft.trim() !== data?.proxyUrl));
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['youtubeSettings'] });
@@ -58,8 +63,11 @@ function YouTubeSection() {
 
   const saveSettings = useMutation({
     mutationFn: (p: YouTubeSettingsUpdate) => updateYouTubeSettings(p),
-    onSuccess: () => { setSettingsError(null); refresh(); },
-    onError: (e: unknown) => setSettingsError(getErrorMessage(e, 'Could not save YouTube settings.')),
+    onSuccess: (updated) => { qc.setQueryData(['youtubeSettings'], updated); setSettingsError(null); qc.invalidateQueries({ queryKey: ['settings'] }); },
+    onError: (e: unknown, values) => {
+      const field = 'proxyUrl' in values ? 'proxyUrl' : 'ytdlpExtraArgs' in values ? 'ytdlpExtraArgs' : null;
+      setSettingsError({ field, message: getErrorMessage(e, 'Could not save YouTube settings.') });
+    },
   });
 
   const saveKey = useMutation({
@@ -102,12 +110,19 @@ function YouTubeSection() {
   const resetAll = useMutation({
     mutationFn: resetYouTubeSettings,
     onSuccess: () => { setSettingsError(null); setArgsDraft(null); setProxyDraft(null); refresh(); },
-    onError: (e: unknown) => setSettingsError(getErrorMessage(e, 'Could not reset YouTube settings.')),
+    onError: (e: unknown) => setSettingsError({ field: null, message: getErrorMessage(e, 'Could not reset YouTube settings.') }),
   });
+  const proxyErr = settingsError?.field === 'proxyUrl' ? settingsError.message : null;
+  const argsErr = settingsError?.field === 'ytdlpExtraArgs' ? settingsError.message : null;
+  const settingsBusy = saveSettings.isPending || resetAll.isPending;
+  const keyBusy = saveKey.isPending || testKey.isPending;
+  const cookiesBusy = saveCookies.isPending || clearCookies.isPending;
 
   return (
     <CollapsibleSection title="YouTube">
-      {isLoading || !data ? (
+      {isError ? (
+        <QueryError title="Could not load YouTube settings." onRetry={() => void refetch()} retrying={isFetching} />
+      ) : isPending || !data ? (
         <SkeletonRows count={4} />
       ) : (
         <div className="space-y-4">
@@ -116,15 +131,15 @@ function YouTubeSection() {
               <ToggleSwitch
                 checked={data.enabled}
                 onChange={(enabled) => saveSettings.mutate({ enabled })}
-                disabled={saveSettings.isPending}
+                disabled={settingsBusy}
                 ariaLabel="Enable YouTube feeds"
               />
               <span className="text-sm font-medium text-foreground">Enable YouTube feeds</span>
             </label>
             <p className="text-sm text-muted-foreground">
-              Turns playlists and channels into podcast feeds with yt-dlp. Check YouTube&apos;s terms of service for your use before enabling.
+              Turns YouTube videos, playlists and channels into podcast feeds with yt-dlp.
             </p>
-            {settingsError && <p role="alert" className="text-sm text-destructive">{settingsError}</p>}
+            {settingsError && !settingsError.field && <p role="alert" className="text-sm text-destructive">{settingsError.message}</p>}
           </div>
 
           <div className="pt-3 border-t border-border space-y-2">
@@ -136,6 +151,7 @@ function YouTubeSection() {
               className={`${inputBase} w-full max-w-md`}
               placeholder={data.apiKeyConfigured ? 'Stored' : ''}
               value={keyDraft}
+              disabled={keyBusy}
               onChange={(e) => setKeyDraft(e.target.value)}
               aria-invalid={keyError ? true : undefined}
               aria-describedby={keyError ? 'yt-api-key-error' : undefined}
@@ -144,7 +160,7 @@ function YouTubeSection() {
               <button
                 type="button"
                 className={`${btnBase} ${btnSecondary}`}
-                disabled={!keyDraft || saveKey.isPending}
+                disabled={!keyDraft.trim() || keyBusy}
                 onClick={() => saveKey.mutate(keyDraft)}
               >
                 {saveKey.isPending ? 'Saving...' : 'Save key'}
@@ -152,7 +168,7 @@ function YouTubeSection() {
               <button
                 type="button"
                 className={`${btnBase} ${btnSecondary}`}
-                disabled={!data.apiKeyConfigured || saveKey.isPending}
+                disabled={!data.apiKeyConfigured || keyBusy}
                 onClick={() => saveKey.mutate(null)}
               >
                 Clear key
@@ -160,7 +176,7 @@ function YouTubeSection() {
               <button
                 type="button"
                 className={`${btnBase} ${btnSecondary}`}
-                disabled={testKey.isPending || (!keyDraft && !data.apiKeyConfigured)}
+                disabled={keyBusy || (!keyDraft.trim() && !data.apiKeyConfigured)}
                 onClick={() => { setKeyTest(null); testKey.mutate(); }}
               >
                 {testKey.isPending ? 'Testing...' : 'Test key'}
@@ -190,7 +206,7 @@ function YouTubeSection() {
                   fallback={data[field]}
                   step={1}
                   parse={parseInt}
-                  disabled={saveSettings.isPending}
+                  disabled={settingsBusy}
                   onCommit={(v) => { if (v !== data[field]) saveSettings.mutate({ [field]: v }); }}
                 />
               </div>
@@ -199,7 +215,7 @@ function YouTubeSection() {
               <ToggleSwitch
                 checked={data.llmFallback}
                 onChange={(llmFallback) => saveSettings.mutate({ llmFallback })}
-                disabled={saveSettings.isPending}
+                disabled={settingsBusy}
                 ariaLabel="Fall back to the LLM pipeline when no marks appear"
               />
               <span className="text-sm text-foreground">Fall back to the LLM pipeline when no marks appear</span>
@@ -208,7 +224,7 @@ function YouTubeSection() {
               <ToggleSwitch
                 checked={data.captionsAsTranscript}
                 onChange={(captionsAsTranscript) => saveSettings.mutate({ captionsAsTranscript })}
-                disabled={saveSettings.isPending}
+                disabled={settingsBusy}
                 ariaLabel="Use YouTube captions as the transcript"
               />
               <span className="text-sm text-foreground">Use YouTube captions as the transcript</span>
@@ -217,7 +233,7 @@ function YouTubeSection() {
               <ToggleSwitch
                 checked={data.hidePrivate}
                 onChange={(hidePrivate) => saveSettings.mutate({ hidePrivate })}
-                disabled={saveSettings.isPending}
+                disabled={settingsBusy}
                 ariaLabel="Hide private and deleted episodes"
               />
               <span className="text-sm text-foreground">Hide private and deleted episodes</span>
@@ -226,7 +242,7 @@ function YouTubeSection() {
               <ToggleSwitch
                 checked={data.transcribeFallback}
                 onChange={(transcribeFallback) => saveSettings.mutate({ transcribeFallback })}
-                disabled={saveSettings.isPending}
+                disabled={settingsBusy}
                 ariaLabel="Transcribe when captions are missing"
               />
               <span className="text-sm text-foreground">Transcribe when captions are missing</span>
@@ -240,9 +256,10 @@ function YouTubeSection() {
               rows={4}
               className={`${textareaBase} w-full font-mono`}
               value={cookiesDraft}
+              disabled={cookiesBusy}
               onChange={(e) => setCookiesDraft(e.target.value)}
               spellCheck={false}
-              aria-describedby="yt-cookies-help"
+              aria-describedby={`yt-cookies-help${cookiesError ? ' yt-cookies-error' : ''}`}
               aria-invalid={cookiesError ? true : undefined}
             />
             <p id="yt-cookies-help" className="text-sm text-muted-foreground">
@@ -257,7 +274,7 @@ function YouTubeSection() {
               <button
                 type="button"
                 className={`${btnBase} ${btnSecondary}`}
-                disabled={!cookiesDraft.trim() || saveCookies.isPending}
+                disabled={!cookiesDraft.trim() || cookiesBusy}
                 onClick={() => saveCookies.mutate()}
               >
                 {saveCookies.isPending ? 'Saving...' : 'Save cookies'}
@@ -265,19 +282,20 @@ function YouTubeSection() {
               <button
                 type="button"
                 className={`${btnBase} ${btnSecondary}`}
-                disabled={!data.cookies.set || clearCookies.isPending}
+                disabled={!data.cookies.set || cookiesBusy}
                 onClick={() => clearCookies.mutate()}
               >
-                Clear cookies
+                {clearCookies.isPending ? 'Clearing...' : 'Clear cookies'}
               </button>
             </div>
-            {cookiesError && <p role="alert" className="text-sm text-destructive">{cookiesError}</p>}
+            {cookiesError && <p id="yt-cookies-error" role="alert" className="text-sm text-destructive">{cookiesError}</p>}
+            {(saveCookies.isSuccess || clearCookies.isSuccess) && !cookiesError && <SavedBadge />}
           </div>
 
           <div className="pt-3 border-t border-border space-y-2">
             <h4 className={subHeading}>yt-dlp</h4>
             <div className="space-y-1">
-              <label htmlFor="yt-proxy-url" className="text-sm text-foreground">Proxy URL</label>
+              <label htmlFor="yt-proxy-url" className={labelBase}>Proxy URL</label>
               <input
                 id="yt-proxy-url"
                 type="text"
@@ -285,20 +303,23 @@ function YouTubeSection() {
                 spellCheck={false}
                 className={`${inputBase} w-full font-mono`}
                 value={proxyDraft ?? data.proxyUrl}
+                disabled={settingsBusy}
                 onChange={(e) => setProxyDraft(e.target.value)}
                 onBlur={() => {
                   if (proxyDraft === null) return;
                   if (proxyDraft.trim() === data.proxyUrl) setProxyDraft(null);
                   else saveSettings.mutate({ proxyUrl: proxyDraft }, { onSuccess: () => setProxyDraft(null) });
                 }}
-                aria-describedby="yt-proxy-url-help"
+                aria-invalid={!!proxyErr}
+                aria-describedby={`yt-proxy-url-help${proxyErr ? ' yt-proxy-url-error' : ''}`}
               />
               <p id="yt-proxy-url-help" className="text-sm text-muted-foreground">
                 Used for yt-dlp and YouTube Data API requests. Example: socks5h://proxy:1080
               </p>
+              {proxyErr && <p id="yt-proxy-url-error" role="alert" className="text-sm text-destructive">{proxyErr}</p>}
             </div>
             <div className="space-y-1">
-              <label htmlFor="yt-extra-args" className="text-sm text-foreground">Extra yt-dlp arguments</label>
+              <label htmlFor="yt-extra-args" className={labelBase}>Extra yt-dlp arguments</label>
               <input
                 id="yt-extra-args"
                 type="text"
@@ -306,17 +327,20 @@ function YouTubeSection() {
                 spellCheck={false}
                 className={`${inputBase} w-full font-mono`}
                 value={argsDraft ?? data.ytdlpExtraArgs}
+                disabled={settingsBusy}
                 onChange={(e) => setArgsDraft(e.target.value)}
                 onBlur={() => {
                   if (argsDraft === null) return;
                   if (argsDraft.trim() === data.ytdlpExtraArgs) setArgsDraft(null);
                   else saveSettings.mutate({ ytdlpExtraArgs: argsDraft }, { onSuccess: () => setArgsDraft(null) });
                 }}
-                aria-describedby="yt-extra-args-help"
+                aria-invalid={!!argsErr}
+                aria-describedby={`yt-extra-args-help${argsErr ? ' yt-extra-args-error' : ''}`}
               />
               <p id="yt-extra-args-help" className="text-sm text-muted-foreground">
                 Added before MinusPod&apos;s options on every yt-dlp call. Example: --limit-rate 2M --extractor-args youtube:player_client=web
               </p>
+              {argsErr && <p id="yt-extra-args-error" role="alert" className="text-sm text-destructive">{argsErr}</p>}
             </div>
             <div className="mt-3 text-sm text-muted-foreground">
               <div>
@@ -330,7 +354,7 @@ function YouTubeSection() {
               <ToggleSwitch
                 checked={data.ytdlp.autoUpdate}
                 onChange={(ytdlpAutoUpdate) => saveSettings.mutate({ ytdlpAutoUpdate })}
-                disabled={saveSettings.isPending}
+                disabled={settingsBusy}
                 ariaLabel="Update yt-dlp daily"
               />
               <span className="text-sm text-foreground">Update yt-dlp daily</span>
@@ -357,6 +381,7 @@ function YouTubeSection() {
               label="Reset to defaults"
               confirmHint="Reset YouTube settings to their defaults, including the daily yt-dlp update toggle? The feature switch, Data API key and cookies file are kept."
               isPending={resetAll.isPending}
+              disabled={saveSettings.isPending}
               onConfirm={() => resetAll.mutate()}
             />
             {resetAll.isSuccess && !settingsError && <SavedBadge />}
