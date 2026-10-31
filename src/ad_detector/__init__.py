@@ -160,7 +160,6 @@ from .prompts import (
     CATEGORY_REPAIR_JSON_SCHEMA,
     CATEGORY_REPAIR_MAX_TOKENS,
     AD_DETECTION_JSON_SCHEMA,
-    ad_detection_json_schema,
     format_category_repair_prompt,
     log_assembled_system_prompt,
     parse_category_repair_response,
@@ -1364,7 +1363,7 @@ class AdDetector:
             slug=slug, episode_id=episode_id,
             window_label=window_label,
             pass_name=pass_name,
-            response_schema=ad_detection_json_schema(addressing_mode),
+            response_schema=AD_DETECTION_JSON_SCHEMA,
         )
         if response is None:
             logger.error(

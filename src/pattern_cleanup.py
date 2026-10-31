@@ -90,22 +90,26 @@ REVIEW_SCHEMA = {
         "sponsor": {"type": ["string", "null"]},
         "category": {"type": ["string", "null"], "enum": [*SEGMENT_CATEGORIES, None]},
         "pieces": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {
                 "type": "object",
                 "properties": {
-                    "text": {"type": "string"}, "sponsor": {"type": "string"},
+                    "text": {"type": "string"},
+                    "sponsor": {"type": "string"},
                     "category": {"type": ["string", "null"], "enum": [*SEGMENT_CATEGORIES, None]},
                 },
-                "required": ["text", "sponsor"],
+                "required": ["text", "sponsor", "category"],
+                "additionalProperties": False,
             },
         },
-        "contaminated": {"type": "boolean"},
+        "contaminated": {"type": ["boolean", "null"]},
         "contamination_reason": {"type": ["string", "null"]},
         "confidence": {"type": "number"},
-        "reasons": {"type": "array", "items": {"type": "string"}},
+        "reasons": {"type": ["array", "null"], "items": {"type": "string"}},
     },
-    "required": ["action", "confidence"],
+    "required": ["action", "text", "sponsor", "category", "pieces",
+                 "contaminated", "contamination_reason", "confidence", "reasons"],
+    "additionalProperties": False,
 }
 
 

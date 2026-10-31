@@ -294,15 +294,30 @@ class TestTrimRecoverySchema:
 
     def test_schema_allows_the_no_sub_span_answer(self):
         from ad_reviewer import TRIM_RECOVERY_JSON_SCHEMA
+        assert TRIM_RECOVERY_JSON_SCHEMA['type'] == 'object'
+        assert TRIM_RECOVERY_JSON_SCHEMA['required'] == list(TRIM_RECOVERY_JSON_SCHEMA['properties'].keys())
+        assert TRIM_RECOVERY_JSON_SCHEMA['additionalProperties'] is False
         props = TRIM_RECOVERY_JSON_SCHEMA['properties']
         assert props['ad_start']['type'] == ['number', 'null']
         assert props['ad_end']['type'] == ['number', 'null']
-        assert TRIM_RECOVERY_JSON_SCHEMA['required'] == ['ad_start', 'ad_end']
 
     def test_review_items_require_only_the_verdict_and_reason(self):
         from ad_reviewer import AD_REVIEW_JSON_SCHEMA
-        items = AD_REVIEW_JSON_SCHEMA['properties']['ads']['items']
-        assert items['required'] == ['is_ad', 'reason']
+        assert AD_REVIEW_JSON_SCHEMA['type'] == 'object'
+        assert AD_REVIEW_JSON_SCHEMA['required'] == list(AD_REVIEW_JSON_SCHEMA['properties'].keys())
+        assert AD_REVIEW_JSON_SCHEMA['additionalProperties'] is False
+        ad_schema = AD_REVIEW_JSON_SCHEMA['properties']['ads']['items']
+        assert ad_schema['type'] == 'object'
+        assert ad_schema['required'] == list(ad_schema['properties'].keys())
+        assert ad_schema['additionalProperties'] is False
+        ad_props = ad_schema['properties']
+        # Required properties do not allow null values
+        assert ad_props['is_ad']['type'] == 'boolean'
+        assert ad_props['reason']['type'] == 'string'
+        assert ad_props['confidence']['type'] == 'number'
+        # Optional properties allow null values
+        assert ad_props['start']['type'] == ['number', 'null']
+        assert ad_props['end']['type'] == ['number', 'null']
 
     def test_prompt_asks_for_the_object_form_not_bare_null(self):
         from ad_reviewer import _TRIM_RECOVERY_SYSTEM_PROMPT
@@ -354,64 +369,50 @@ class TestRecordFormatFlagMerge:
         _db().clear_setting(key)
 
 
-class TestDetectionSchemaCategoryEnum:
+class TestDetectionSchema:
+    def test_all_fields_required_and_no_additional_properties(self):
+        """An enforcing decoder emits only required fields reliably, so the
+        window schema requires what the prompt requires."""
+
+        from ad_detector.prompts import AD_DETECTION_JSON_SCHEMA
+        assert AD_DETECTION_JSON_SCHEMA['type'] == 'object'
+        assert AD_DETECTION_JSON_SCHEMA['required'] == list(AD_DETECTION_JSON_SCHEMA['properties'].keys())
+        assert AD_DETECTION_JSON_SCHEMA['additionalProperties'] is False
+        ad_schema = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']
+        assert ad_schema['type'] == 'object'
+        assert ad_schema['required'] == list(ad_schema['properties'].keys())
+        assert ad_schema['additionalProperties'] is False
+
+    def test_null_used_for_optional_fields(self):
+        from ad_detector.prompts import AD_DETECTION_JSON_SCHEMA
+        ad_props = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']['properties']
+        # Required fields do not allow null values
+        assert AD_DETECTION_JSON_SCHEMA['properties']['ads']['type'] == 'array'
+        assert ad_props['start']['type'] == 'number'
+        assert ad_props['end']['type'] == 'number'
+        assert ad_props['category']['type'] == 'string'
+        assert ad_props['reason']['type'] == 'string'
+        assert ad_props['confidence']['type'] == 'number'
+        # Optional fields do allow null values
+        assert ad_props['start_text']['type'] == ['string', 'null']
+        assert ad_props['end_text']['type'] == ['string', 'null']
+        assert ad_props['sponsor_name']['type'] == ['string', 'null']
+
+    def test_free_text_is_capped(self):
+        from ad_detector.prompts import AD_DETECTION_JSON_SCHEMA
+        from ad_detector.prompts import AD_SCHEMA_TEXT_MAX_CHARS
+        from utils.constants import SPONSOR_MAX_NAME_CHARS
+        ad_props = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']['properties']
+        assert ad_props['start_text']['maxLength'] == AD_SCHEMA_TEXT_MAX_CHARS
+        assert ad_props['end_text']['maxLength'] == AD_SCHEMA_TEXT_MAX_CHARS
+        assert ad_props['reason']['maxLength'] == AD_SCHEMA_TEXT_MAX_CHARS
+        assert ad_props['sponsor_name']['maxLength'] == SPONSOR_MAX_NAME_CHARS
+        assert 'maxLength' not in ad_props['category']
+
     def test_enum_matches_the_prompt_vocabulary(self):
         """The enum derives from SEGMENT_CATEGORIES so schema and prompt cannot drift."""
         from ad_detector.prompts import AD_DETECTION_JSON_SCHEMA
         from config import SEGMENT_CATEGORIES
+        ad_props = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']['properties']
+        assert ad_props['category']['enum'] == list(SEGMENT_CATEGORIES)
 
-        category = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items'][
-            'properties']['category']
-        assert category['enum'] == list(SEGMENT_CATEGORIES)
-        # Items stay optional so both addressing modes validate.
-        assert 'required' not in AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']
-
-    def test_only_the_first_choice_sponsor_field_is_described(self):
-        """The prompt never mentions the aliases, so the description is the
-        model's only context; repeating it on all seven only costs tokens."""
-        from ad_detector.prompts import AD_DETECTION_JSON_SCHEMA
-        from utils.constants import SPONSOR_PRIORITY_FIELDS
-
-        props = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']['properties']
-        first_choice, *aliases = SPONSOR_PRIORITY_FIELDS
-        assert 'at most one' in props[first_choice]['description']
-        # The rest stay as slots an enforcing decoder cannot strip.
-        for field in aliases:
-            assert props[field] == {'type': 'string'}
-
-
-class TestModeDetectionSchema:
-    """An enforcing decoder emits only required fields reliably, so the
-    window schema requires what the prompt requires, per addressing mode."""
-
-    def _items(self, mode):
-        from ad_detector.prompts import ad_detection_json_schema
-        return ad_detection_json_schema(mode)['properties']['ads']['items']
-
-    def test_timestamps_mode_requires_start_and_end(self):
-        required = self._items('timestamps')['required']
-        assert required[:2] == ['start', 'end']
-        assert 'start_id' not in required
-        assert {'start_text', 'end_text', 'category', 'confidence', 'reason'} <= set(required)
-
-    def test_segment_ids_mode_requires_ids_not_timestamps(self):
-        required = self._items('segment_ids')['required']
-        assert required[:2] == ['start_id', 'end_id']
-        assert 'start' not in required and 'end' not in required
-
-    def test_free_text_is_capped(self):
-        from ad_detector.prompts import AD_SCHEMA_TEXT_MAX_CHARS
-        from utils.constants import SPONSOR_MAX_NAME_CHARS, SPONSOR_PRIORITY_FIELDS
-        props = self._items('timestamps')['properties']
-        assert props['reason']['maxLength'] == AD_SCHEMA_TEXT_MAX_CHARS
-        assert props['end_text']['maxLength'] == AD_SCHEMA_TEXT_MAX_CHARS
-        for field in SPONSOR_PRIORITY_FIELDS:
-            assert props[field]['maxLength'] == SPONSOR_MAX_NAME_CHARS
-        assert 'maxLength' not in props['category']
-
-    def test_shared_schema_is_left_untouched(self):
-        from ad_detector.prompts import AD_DETECTION_JSON_SCHEMA
-        self._items('timestamps')
-        items = AD_DETECTION_JSON_SCHEMA['properties']['ads']['items']
-        assert 'required' not in items
-        assert 'maxLength' not in items['properties']['reason']
