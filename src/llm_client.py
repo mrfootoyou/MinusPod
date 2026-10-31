@@ -1827,9 +1827,12 @@ class OpenAICompatibleClient(LLMClient):
                     "type": "json_schema",
                     "json_schema": {
                         "name": "probe",
+                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {"ok": {"type": "boolean"}},
+                            "required": ["ok"],
+                            "additionalProperties": False
                         },
                     },
                 }
