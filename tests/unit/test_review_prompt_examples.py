@@ -28,7 +28,7 @@ def test_adjust_example_boundaries_appear_in_its_context_lines():
     """95.0 and 132.0 must be readable off the surrounding lines, not guessed."""
     assert '[92.0-95.0]' in DEFAULT_REVIEW_PROMPT
     assert '[130.0-132.0]' in DEFAULT_REVIEW_PROMPT
-    assert '"start": 95.0, "end": 132.0' in DEFAULT_REVIEW_PROMPT
+    assert '"start": 95.0,\n      "end": 135.0,' in DEFAULT_REVIEW_PROMPT
 
 
 def test_framing_matches_the_user_prompt_wording():

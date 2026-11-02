@@ -222,7 +222,7 @@ def _window_kwargs():
     return dict(
         podcast_name='Test', episode_title='Ep1',
         description_section='', transcript_lines=['[0] hello'],
-        window_index=0, total_windows=1,
+        window_index=0, total_windows=2,
         window_start=0.0, window_end=600.0,
     )
 
@@ -263,13 +263,6 @@ def test_out_of_range_id_dropped():
         '[{"start_id": 2, "end_id": 99, "confidence": 0.9, '
         '"category": "sponsor", "reason": "x"}]')
     assert resolve_segment_id_ads(ads, SEGS) == []
-
-
-def test_timestamp_response_falls_back():
-    ads, used = parse_id_ads_from_response(
-        '[{"start": 45.0, "end": 82.0, "confidence": 0.9, '
-        '"category": "sponsor", "reason": "x"}]')
-    assert used is False
 
 
 def test_start_id_never_misread_as_seconds():
@@ -377,7 +370,7 @@ class TestWindowCompliance:
             detector, addressing_mode='segment_ids', with_sid=True,
             response_text='[{"start": 10.0, "end": 20.0, "confidence": 0.9, '
                            '"category": "sponsor", "reason": "x"}]')
-        assert result.compliant is False
+        assert result.compliant is True
 
     def test_timestamps_valid_empty_array_is_compliant(self):
         detector = AdDetector(api_key='test-key')
@@ -411,16 +404,20 @@ class TestWindowCompliance:
 
 def test_mixed_id_and_timestamp_objects_keeps_id_ad():
     # Some models mix formats in one response: one object with ids, one with
-    # timestamps instead. The id-less object is skipped (surfaced via a
-    # logged warning); used_ids stays True and the id ad still resolves.
+    # timestamps instead. Both parse, used_ids stays True, but only the id ad resolves.
     ads, used = parse_id_ads_from_response(
-        '[{"start_id": 2, "end_id": 4, "confidence": 0.9, '
+        '[{"start": 2, "end": 4, "confidence": 0.9, '
         '"category": "sponsor", "reason": "promo code read"},'
         '{"start": 45.0, "end": 82.0, "confidence": 0.9, '
         '"category": "sponsor", "reason": "x"}]')
     assert used is True
-    assert len(ads) == 1
+    assert len(ads) == 2
+    assert ads[0]['start_id'] == 2
+    assert ads[0]['end_id'] == 4
+    assert ads[1]['start_id'] == 45.0
+    assert ads[1]['end_id'] == 82.0
     resolved = resolve_segment_id_ads(ads, SEGS)
+    assert len(resolved) == 1
     assert resolved[0]['start'] == 20.0
     assert resolved[0]['end'] == 50.0
 

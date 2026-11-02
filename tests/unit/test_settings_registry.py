@@ -122,21 +122,21 @@ SEED_SNAPSHOT = {
     'podping_enabled': 'false',
     'processing_hard_timeout_seconds': '7200',
     'processing_soft_timeout_seconds': '3600',
-    'resurrect_prompt': ('sha256', 'acb50061101c13546c2daad89b2aa4802c65caee921b15ca6c7dfa362c98d45b'),  # Updated for semantic is_ad schema line
+    'resurrect_prompt': ('sha256', '90e5860a99811b8f1cd96c2cd11e08c04d689cac55b0831500ff52cadbf7855a'),  # Updated for semantic is_ad schema line
     'retention_period_minutes': '1440',
     'review_max_boundary_shift': '60',
     'review_model': 'same_as_pass',
     'review_provider': 'same_as_pass',
     'secondary_provider_enabled': 'false',
     'secondary_provider_base_url': 'http://localhost:8000/v1',
-    'review_prompt': ('sha256', '3515a8a98250a187f7e885b696864db04ceca30ffdf97d72baa6a3d69029e87a'),  # Updated for the untranscribed-audio sentence
+    'review_prompt': ('sha256', '39ba56457da6fd20124d0931945617e3eab4ba42a72247dc7d3ad727390fc408'),  # Updated for the untranscribed-audio sentence
     'rss_refresh_interval_minutes': '15',
     'auto_process_max_age_hours': '48',
     'queue_manual_boost': '20',
     'queue_fresh_boost': '5',
     'queue_bulk_boost': '0',
     'segment_category_actions': '{}',
-    'system_prompt': ('sha256', '20ed55333d9e12d653308a379cb8c69a354fe04fd4e62c90abf749fec7d9031e'),  # Updated for cross_promo semantics change
+    'system_prompt': ('sha256', '5bbf2ee433d9c85fa29f60801ec030db7dccc0165c56425270c6393384ea2ba5'),  # Updated for cross_promo semantics change
     'transcribe_chunk_overlap_seconds': '30',
     'transcribe_concurrent_chunks': '4',
     'whisper_api_timeout_seconds': '600',
@@ -147,7 +147,7 @@ SEED_SNAPSHOT = {
     'transition_threshold_db': '3.5',
     'verification_miss_autocut_min_confidence': '0',
     'verification_miss_hold_min_confidence': '0.60',
-    'verification_prompt': ('sha256', 'fd2d0c90e63226bc5f43ad148611c06d1dec441e55569e98f5a531ac08e1ed4d'),
+    'verification_prompt': ('sha256', '9363978754bfb9f2690f1e463e4bdb0b6e405f972fe005fca2dae79c93a1ba56'),
     'volume_threshold_db': '3.0',
     'vtt_transcripts_enabled': 'true',
     'whisper_language': 'en',
@@ -653,7 +653,7 @@ class TestShippedPromptsTrackTheDefault:
         from utils.constants import DEFAULT_SYSTEM_PROMPT
         values = dict(iter_refreshable_defaults())
         assert values['system_prompt'] == DEFAULT_SYSTEM_PROMPT
-        assert 'CATEGORY:' in values['system_prompt']
+        assert 'CATEGORIES:' in values['system_prompt']
 
 
 def test_youtube_reset_keys_cover_every_default_but_the_switch():
