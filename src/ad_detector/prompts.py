@@ -3,7 +3,6 @@
 Pure functions / module-level constants for prompt assembly and response
 parsing. No DB, no LLM client. Split out of ``ad_detector/__init__.py``.
 """
-import copy
 import logging
 import json
 import re

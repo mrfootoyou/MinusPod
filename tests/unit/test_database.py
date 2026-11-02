@@ -1915,7 +1915,7 @@ class TestStalePromptRefresh:
 
         value, _ = self._row(temp_db, 'system_prompt')
         assert value == DEFAULT_SYSTEM_PROMPT
-        assert 'CATEGORY:' in value
+        assert 'CATEGORIES:' in value
 
     def test_a_user_edited_prompt_is_left_alone(self, temp_db):
         conn = temp_db.get_connection()
