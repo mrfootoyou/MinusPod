@@ -173,16 +173,27 @@ def test_format_window_prompt_includes_window_header():
     assert '=== WINDOW 3/4: 10.0-20.0 minutes ===' in out
 
 
+def test_format_window_prompt_emits_nothing_when_single_window():
+    out = format_window_prompt(
+        podcast_name='Test', episode_title='Ep1',
+        description_section='', transcript_lines=['[0.0-5.0] hello'],
+        window_index=0, total_windows=1,
+        window_start=600.0, window_end=1200.0,
+    )
+    # window_index is 0-based; header is 1-based.
+    assert '=== WINDOW' not in out
+
+
 def test_format_window_prompt_appends_audio_context_between_template_and_header():
     out = format_window_prompt(
         podcast_name='Test', episode_title='Ep1',
         description_section='', transcript_lines=['[0.0-5.0] hi'],
-        window_index=0, total_windows=1,
+        window_index=0, total_windows=2,
         window_start=0.0, window_end=600.0,
         audio_context='\n=== AUDIO ===\nvolume_drop at 5.0s\n',
     )
     audio_pos = out.find('=== AUDIO ===')
-    window_pos = out.find('=== WINDOW 1/1')
+    window_pos = out.find('=== WINDOW 1/2')
     assert audio_pos > 0 and window_pos > 0
     assert audio_pos < window_pos, "audio_context should appear before window header"
 

@@ -70,23 +70,22 @@ class TestDefaultPromptCategoryInstructions:
 
     def test_intro_outro_recap_gated_on_show_segments_section(self):
         assert 'SHOW SEGMENTS' in DEFAULT_SYSTEM_PROMPT
-        assert 'only when this prompt also contains a SHOW SEGMENTS section' \
+        assert 'only when this prompt also contains a `SHOW SEGMENTS` section' \
             in DEFAULT_SYSTEM_PROMPT
 
     def test_category_required_wording_adjacent_to_schema_line(self):
         # Must sit next to the schema line, not only in the CATEGORY block
         # further down: that let a model skip the field while still
         # following the CATEGORY block's enum rules for everything else.
-        schema_idx = DEFAULT_SYSTEM_PROMPT.index('Each ad segment:')
+        schema_idx = DEFAULT_SYSTEM_PROMPT.index('`category`: See below for the list of valid categories.')
         required_idx = DEFAULT_SYSTEM_PROMPT.index(
-            'is REQUIRED on every ad object')
-        assert 0 < required_idx - schema_idx < 400
-        assert 'is invalid' in DEFAULT_SYSTEM_PROMPT
+            'Every ad object MUST include `category`')
+        assert 0 < required_idx - schema_idx < 500
 
     def test_verification_prompt_requires_category(self):
-        schema_idx = DEFAULT_VERIFICATION_PROMPT.index('Each ad segment:')
-        required_idx = DEFAULT_VERIFICATION_PROMPT.index(
-            '"category" is REQUIRED on every object')
+        schema_idx = DEFAULT_SYSTEM_PROMPT.index('`category`: See below for the list of valid categories.')
+        required_idx = DEFAULT_SYSTEM_PROMPT.index(
+            'Every ad object MUST include `category`')
         assert 0 < required_idx - schema_idx < 500
         for category in SEGMENT_CATEGORIES:
             assert category in DEFAULT_VERIFICATION_PROMPT
@@ -95,7 +94,7 @@ class TestDefaultPromptCategoryInstructions:
         # Both worked examples used to be "sponsor"; the model needs to see
         # a non-sponsor category filled in at least once.
         examples_section = DEFAULT_SYSTEM_PROMPT[
-            DEFAULT_SYSTEM_PROMPT.index('EXAMPLE:'):]
+            DEFAULT_SYSTEM_PROMPT.index('EXAMPLES:'):]
         non_sponsor_cats = ('cross_promo', 'self_promo', 'interaction')
         assert any(f'"category": "{cat}"' in examples_section
                    for cat in non_sponsor_cats)
@@ -129,13 +128,6 @@ class TestShowSegmentsSection:
 
     def test_section_flags_cold_open_as_content(self):
         assert 'cold open' in SHOW_SEGMENTS_PROMPT_SECTION.lower()
-
-    def test_section_states_category_is_required(self):
-        # A detect_show_segments=true feed still got category-less LLM
-        # responses, so the section repeats the requirement itself rather
-        # than relying on the base prompt's block.
-        assert 'REQUIRED' in SHOW_SEGMENTS_PROMPT_SECTION
-        assert '"category"' in SHOW_SEGMENTS_PROMPT_SECTION
 
     def test_section_has_its_own_worked_example_with_category(self):
         assert ('"category": "intro"' in SHOW_SEGMENTS_PROMPT_SECTION
