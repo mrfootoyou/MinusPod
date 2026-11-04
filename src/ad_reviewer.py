@@ -68,7 +68,7 @@ from utils.markers import (
     silent_absorbed_spans, TimedWords, timed_span, union_cover,
 )
 from utils.prompt import (
-    format_sponsor_block, render_prompt, apply_override,
+    format_prompt_code_block, format_sponsor_block, render_prompt, apply_override,
     format_detection_notes_block, scrub_description, strip_comments_from_prompt
 )
 from utils.text import (
@@ -2396,14 +2396,12 @@ class AdReviewer:
             except Exception as e:
                 logger.warning(f"sponsor history provider failed: {e}")
 
-        notes_block = format_detection_notes_block(episode_meta.get("detection_notes"))
-        description_section = notes_block
-        if podcast_description or episode_description:
-            description_section = (
-                f"Podcast description: {podcast_description}\n"
-                f"{notes_block}"
-                f"Episode description: {episode_description}\n"
-            )
+        description_section = ''
+        if podcast_description:
+            description_section += f"Podcast Description:\n{format_prompt_code_block(podcast_description)}\n"
+        description_section += format_detection_notes_block(episode_meta.get("detection_notes"))
+        if episode_description:
+            description_section += f"Episode Description:\n{format_prompt_code_block(episode_description)}\n"
 
         if pool == "resurrection":
             framing = (
