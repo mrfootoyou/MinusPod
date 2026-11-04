@@ -16,7 +16,9 @@ from sponsor_context import (SPONSOR_MIN_MENTIONS, framed_sponsor_names, registr
 from sponsor_service import SponsorService
 from text_pattern_matcher import bounded_segment_texts
 from utils.prompt import (
-    finalize_prompt, format_sponsor_block, render_prompt, strip_comments_from_prompt
+    finalize_prompt, format_prompt_code_block, format_prompt_list,
+    format_prompt_section, format_sponsor_block, render_prompt,
+    strip_comments_from_prompt
 )
 from utils.text import truncate
 from utils.time import parse_timestamp
@@ -58,21 +60,18 @@ _SPONSOR_FIELD_STEMS = frozenset(_singular(f) for f in SPONSOR_PRIORITY_FIELDS)
 
 
 # User prompt template (not configurable via UI - just formats the transcript)
-# Description is optional - may contain sponsor lists, chapter markers, or content context
 USER_PROMPT_TEMPLATE = """
-Please segment the following podcast transcript.
+<session_context>
+This is the Segmentation API. We are setting up the transcript context.
+
+{metadata}
 
 {window_context}
 
-=== EPISODE METADATA ===
-Podcast: {podcast_name}
-Episode: {episode_title}
-{description_section}
-
-=== EPISODE TRANSCRIPT ===
-{transcript}
-
 {audio_context}
+</session_context>
+
+{transcript}
 """
 
 def create_windows(segments: list[dict], window_size: float = None,
@@ -158,30 +157,33 @@ def _build_window_context(
     if (total_windows <= 1): 
         return "" # No context needed for a single window
 
-    window_context = (
-        f"Note: This is a partial transcript (window {window_index + 1} of "
+    window_context = []
+    window_context.append(
+        f"This is a partial transcript (window {window_index + 1} of "
         f"{total_windows}) with hard cuts at {window_start:.1f}s "
         f"thru {window_end:.1f}s.\n"
     )
     if (window_index > 0 and window_index + 1 < total_windows):
         # save a few tokens by combining the two instructions
-        window_context += (
+        window_context.append(
             "If the first or last segment appears to begin or end outside this "
             "window, append \"continues from previous\" or \"continues in next\" "
             "to the `reason` field.\n"
         )
     elif (window_index > 0):
-        window_context += (
+        window_context.append(
             "If the first segment appears to begin outside this window, append "
             "\"continues from previous\" to the `reason` field.\n"
         )
     elif (window_index + 1 < total_windows):
-        window_context += (
+        window_context.append(
             "If the last segment appears to end outside this window, append "
             "\"continues in next\" to the `reason` field.\n"
         )
 
-    return window_context
+    return format_prompt_section(
+        "Window Context",
+        format_prompt_list(window_context))
 
 
 def format_window_prompt(
@@ -216,6 +218,13 @@ def format_window_prompt(
       - Audio analysis signals
       - Recurring segment hints
     """
+    metadata = format_prompt_section(
+        "Episode Metadata",
+        (f"Podcast: {re.sub(r"(?:\r?\n)+", ", ", podcast_name)}\n"
+         f"Episode: {re.sub(r"(?:\r?\n)+", ", ", episode_title)}\n"
+         f"{description_section}")
+    )
+
     window_context = _build_window_context(
         window_index=window_index,
         total_windows=total_windows,
@@ -223,22 +232,20 @@ def format_window_prompt(
         window_end=window_end,
     )
 
-    transcript = (
-        "```transcript-with-timestamps\n"
-        if addressing_mode == "timestamps" 
-        else "```transcript-with-indexes\n"
+    transcript = format_prompt_section(
+        "Episode Transcript", 
+        format_prompt_code_block(
+            "\n".join(transcript_lines),
+            language="transcript-with-timestamps" if addressing_mode == "timestamps" else "transcript-with-indexes",
+        )
     )
-    transcript += "\n".join(transcript_lines).replace("```", "\\`\\`\\`")
-    transcript += "\n```"
 
     return finalize_prompt(
         strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
-            podcast_name=re.sub(r"(?:\r?\n)+", ", ", podcast_name),
-            episode_title=re.sub(r"(?:\r?\n)+", ", ", episode_title),
-            description_section=description_section,
-            window_context=window_context,
-            transcript=transcript,
-            audio_context=audio_context,
+            metadata=metadata.strip(),
+            window_context=window_context.strip(),
+            transcript=transcript.strip(),
+            audio_context=audio_context.strip(),
         )
     )
 
