@@ -166,8 +166,6 @@ from .prompts import (
     format_category_repair_prompt,
     log_assembled_system_prompt,
     parse_category_repair_response,
-    SEGMENT_ID_SYSTEM_SECTION,
-    AD_QUOTE_ANCHOR_SECTION,
 )
 # Source the JSON-array scanner directly from utils.llm_response instead of
 # laundering it through prompts.py; re-exported below for backward-compat
@@ -1131,17 +1129,12 @@ class AdDetector:
         """Compose the system prompt for detection window calls.
 
         Appends SHOW_SEGMENTS_PROMPT_SECTION to get_system_prompt() when the
-        podcast opted in, after override resolution, so a customized system_prompt
-        still gets the show-segments instructions. Appends
-        SEGMENT_ID_SYSTEM_SECTION when ``addressing_mode`` is 'segment_ids', after
-        the show-segments section so both layer independently.
+        podcast opted in, after override resolution, so a customized
+        system_prompt still gets the show-segments instructions.
         """
         prompt = self.get_system_prompt()
         if self._podcast_wants_show_segments(slug):
             prompt = f"{prompt}\n\n{SHOW_SEGMENTS_PROMPT_SECTION}"
-        if addressing_mode == 'segment_ids':
-            prompt = f"{prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-        prompt = f"{prompt}{AD_QUOTE_ANCHOR_SECTION}"
         return finalize_prompt(prompt)
 
     _HINT_TIER1_CAP = 12
@@ -3548,11 +3541,7 @@ class AdDetector:
             logger.info(f"[{slug}:{episode_id}] Verification: Processing {len(windows)} windows "
                        f"for {total_duration/60:.1f}min processed audio")
 
-            system_prompt = self.get_verification_prompt()
-            if addressing_mode == 'segment_ids':
-                system_prompt = f"{system_prompt}{SEGMENT_ID_SYSTEM_SECTION}"
-            system_prompt = f"{system_prompt}{AD_QUOTE_ANCHOR_SECTION}"
-            system_prompt = finalize_prompt(system_prompt)
+            system_prompt = finalize_prompt(self.get_verification_prompt())
             log_assembled_system_prompt(slug, episode_id, system_prompt,
                                         label="Verification system")
             model = self.get_verification_model()

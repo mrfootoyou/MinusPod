@@ -35,14 +35,6 @@ def _validate_addressing_mode(mode: str) -> None:
         raise typer.Exit(2)
 
 
-def _with_id_mode_section(system_prompt: str, addressing_mode: str) -> str:
-    """Append SEGMENT_ID_SYSTEM_SECTION after the live/snapshot prompt is
-    resolved, so a frozen snapshot file stays mode-agnostic."""
-    if addressing_mode == "segment_ids":
-        return system_prompt + parsing.SEGMENT_ID_SYSTEM_SECTION
-    return system_prompt
-
-
 def _setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -195,7 +187,6 @@ def run(
     _validate_addressing_mode(addressing_mode)
     cfg = _load(config_path)
     system_prompt, prompt_source = _resolve_prompt(snapshot)
-    system_prompt = _with_id_mode_section(system_prompt, addressing_mode)
     episodes = [corpus_mod.load_episode(cfg.corpus.path / e) for e in corpus_mod.list_episodes(cfg.corpus.path)]
     if not episodes:
         typer.echo("no corpus episodes; run `benchmark capture` first", err=True)
@@ -366,7 +357,6 @@ def show_prompt_cmd(
         typer.echo(f"error reconstructing prompt: {e}", err=True)
         raise typer.Exit(1) from e
     system_prompt, prompt_source = _resolve_prompt(snapshot)
-    system_prompt = _with_id_mode_section(system_prompt, record_mode)
     recomputed = hash_prompt(
         system_prompt=system_prompt,
         user_prompt=user_prompt,

@@ -14,7 +14,6 @@ from ad_detector import (  # type: ignore[import-not-found]
     get_static_system_prompt,
     format_window_prompt,
     deduplicate_window_ads,
-    SEGMENT_ID_SYSTEM_SECTION,
 )
 
 __all__ = [
@@ -26,7 +25,6 @@ __all__ = [
     "format_window_prompt",
     "deduplicate_window_ads",
     "resolve_system_prompt",
-    "SEGMENT_ID_SYSTEM_SECTION",
 ]
 
 
