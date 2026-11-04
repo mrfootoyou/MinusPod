@@ -101,19 +101,6 @@ def test_id_mode_transcript_lines_are_sid_bracketed(tmp_path, write_corpus_episo
     assert "0.0s" not in prompt
 
 
-def test_id_mode_system_section_and_hash_differ_from_timestamps(tmp_path, write_corpus_episode, minimal_cfg):
-    ep = _load(tmp_path, write_corpus_episode)
-    base_system_prompt = "SYSTEM"
-    id_system_prompt = base_system_prompt + parsing.SEGMENT_ID_SYSTEM_SECTION
-    assert "ADDRESSING MODE: SEGMENT IDS" in id_system_prompt
-
-    ts_hashes = runner.precompute_prompt_hashes(minimal_cfg, [ep], system_prompt=base_system_prompt)
-    id_hashes = runner.precompute_prompt_hashes(
-        minimal_cfg, [ep], system_prompt=id_system_prompt, addressing_mode="segment_ids",
-    )
-    assert ts_hashes[("m1", ep.ep_id, 0, 0)] != id_hashes[("m1", ep.ep_id, 0, 0)]
-
-
 def test_timestamps_mode_prompt_and_hash_unchanged_by_default(tmp_path, write_corpus_episode, minimal_cfg):
     """No behavior change in timestamps mode: default calls (no addressing_mode
     kwarg) must byte-match calls that explicitly pass addressing_mode='timestamps'."""

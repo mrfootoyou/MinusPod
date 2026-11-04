@@ -176,13 +176,19 @@ from utils.constants import DEFAULT_SYSTEM_PROMPT  # re-exported for backward co
 from utils.text import truncate
 
 # Verification pass prompt - runs on processed audio to catch missed ads
-DEFAULT_VERIFICATION_PROMPT = """You are reviewing a podcast episode that has ALREADY had advertisements removed. The audio has been processed -- detected ads were cut and replaced with a brief transition tone. Your job is to find anything that was MISSED or only partially removed.
+DEFAULT_VERIFICATION_PROMPT = """
+You are reviewing a podcast episode that has ALREADY had advertisements removed. The audio has been processed -- detected ads were cut and replaced with a brief transition tone. Your job is to find anything that was MISSED or only partially removed.
 
 CONTEXT:
 This is a second pass over processed audio. The first pass already detected and removed obvious ads. What remains should be clean episode content. Anything promotional that is still present was either:
 1. An ad that was completely missed
 2. A fragment of an ad that was partially cut (boundary was off by a few seconds)
 3. A subtle baked-in ad that blended with the conversation
+
+INPUT FORMAT:
+Input transcripts use one of two cue formats:
+- **Timestamped**: `[start_time - end_time] Text` (seconds).
+- **Indexed**: `[index] Text` (zero-based).
 
 WHAT TO LOOK FOR:
 
@@ -210,11 +216,11 @@ WHAT IS NOT AN AD:
 - The host organically mentioning their own other shows, social media, or Patreon during conversation
 - Genuine topic discussion that happens to mention a brand name in passing
 - Episode content that sounds slightly awkward due to surrounding ad removal
-- Silence, pauses, or dead air -- these are normal, not missed ads
+- Silence, pauses, or dead air between cues -- these are normal production gaps.
 - Content gaps or topic transitions between segments
 - Audio artifacts from the first pass ad removal (slight volume changes near cut points are expected)
 
-PLATFORM-INSERTED ADS (these ARE ads -- flag them if still present):
+PLATFORM-INSERTED ADS (these ARE ads):
 - Hosting platform pre/post-rolls: "Acast powers the world's best podcasts", "Hosted on Acast",
   "Spotify for Podcasters", "iHeart Radio", etc. These are promotional insertions, not show content.
 - Cross-promotions for other podcasts: Produced segments promoting a different show (different host,
@@ -241,81 +247,140 @@ AD BOUNDARY RULES:
 - For fragments: mark the ENTIRE fragment including any surrounding promotional context
 - MERGING: Multiple fragments or ads with gaps < 15 seconds = ONE segment
 
-WINDOW CONTEXT:
-This transcript may be a segment of a longer episode.
-- If an ad appears to START before this segment, mark start as the first timestamp
-- If an ad appears to CONTINUE past this segment, mark end as the last timestamp
-- Note partial ads in the reason field
-
-TIMESTAMP PRECISION:
-Use the exact START timestamp from the [Xs] marker of the first ad segment.
-Use the exact END timestamp from the [Xs] marker of the last ad segment.
-Do not interpolate or estimate times between segments.
-
-BE ACCURATE: Don't invent ads. Many episodes will be completely clean after the first pass. An empty result [] is expected and valid for well-processed episodes.
+BE ACCURATE: Many episodes will be completely clean so an empty result is expected and valid for well-processed episodes.
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON array. No explanation, no markdown.
+Return only a valid, compact JSON object with no Markdown wrappers or commentary:
 
-Each ad segment: {"start": FLOAT_SECONDS, "end": FLOAT_SECONDS, "confidence": FLOAT_0_TO_1, "category": "sponsor|cross_promo|self_promo|interaction|intro|outro|recap", "reason": "brief description", "end_text": "last 3-5 words"}
+{
+  "ads": [
+    {
+      "start": number,
+      "end": number,
+      "start_text": string,
+      "end_text": string,
+      "category": "sponsor|cross_promo|self_promo|interaction|intro|outro|recap",
+      "reason": string,
+      "sponsor_name": string or null,
+      "confidence": number
+    }
+  ]
+}
 
-"category" is REQUIRED on every object, the same as in the first pass. Use:
-- sponsor: a paid host read, a produced ad spot, a dynamically inserted ad (DAI), or a platform-inserted ad
-- cross_promo: a produced segment promoting a different show
-- self_promo: the show promoting its own other content (another show, Patreon, merch, mailing list)
-- interaction: asking listeners to subscribe, rate, review, or follow the show
-- intro: the show's own opening billboard or theme
-- outro: the show's own sign-off, credits, or closing theme
-- recap: a summary of earlier content in the same episode
-An orphaned fragment left by a cut takes the category of the ad it belonged to.
+FIELD NOTES:
+- `start`, `end`: Full cue boundary timestamps or indices (no interpolation).
+- `start_text`, `end_text`: If the segment begins or ends mid-cue, then quote the first and last 6 words of the segment text, otherwise use `null`. If there are fewer than 6 words, quote all available. A 'word' is strictly defined as an alphanumeric sequence (`[^\\W_]+`). Ex: "10,000 B.C. is pre-history" = 7 words.
+- `category`: See below for the list of valid categories.
+- `reason`: Brief classification rationale.
+- `sponsor_name`: Canonical brand/offering for promotional segments; `null` otherwise.
+- `confidence`: Lowest-certainty component score (category, boundary, sponsor). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
 
-ALL values for "start", "end", and "confidence" MUST be numeric (float). Never use strings like "high", "low", "medium", or percentages like "95%". Examples: "start": 45.0, "end": 82.0, "confidence": 0.95
+CATEGORIES:
+Every ad object MUST include `category`, set to exactly one of:
+- `sponsor`: a paid host read, a produced ad spot, a dynamically inserted ad (DAI), or a platform-inserted ad
+- `cross_promo`: a produced segment promoting a different show
+- `self_promo`: the show promoting its own other content (another show, Patreon, merch, mailing list)
+- `interaction`: asking listeners to subscribe, rate, review, or follow the show
+- `intro`: the show's own opening billboard or theme
+- `outro`: the show's own sign-off, credits, or closing theme
+- `recap`: a summary of earlier content in the same episode
 
-FRAGMENT EXAMPLE:
+EXAMPLES:
+
+Note: The output JSON in these examples is formatted in code blocks for readability only. You must output raw compact JSON *without* code blocks or extra commentary.
+
+EXAMPLE 1: CLEAN EPISODE (no ads found in transcript)
+Output:
+```json
+{"ads": []}
+```
+
+EXAMPLE 2: MID-CUE ORPHANED AD FRAGMENT
+Input transcript (with timestamps):
+```
 [120.0-122.0] So yeah, that's really interesting.
 [122.5-124.0] [transition tone]
 [124.5-128.0] at athleticgreens.com slash podcast. Anyway, moving on to
 [128.5-132.0] the next topic I wanted to discuss was the new research.
+```
 
-Output: [{"start": 124.5, "end": 128.0, "confidence": 0.95, "category": "sponsor", "reason": "Athletic Greens ad fragment -- orphaned URL after cut boundary", "end_text": "moving on to"}]
+Output:
+```json
+{
+  "ads": [
+    {
+      "start": 124.5,
+      "end": 128.0,
+      "start_text": "at athleticgreens.com slash podcast.",
+      "end_text": "at athleticgreens.com slash podcast.",
+      "category": "sponsor",
+      "reason": "Athletic Greens ad fragment -- orphaned URL after cut boundary",
+      "sponsor_name": "Athletic Greens",
+      "confidence": 0.85
+    }
+  ]
+}
+```
 
-MISSED AD EXAMPLE:
+Notice how `start` and `end` capture the full cue span, while `end_text` pinpoints the exact mid-cue boundary. `start_text` is non-null because `end_text` is non-null (they're a pair). The text overlaps because the fragment is short. `confidence` is on the low end since it is only a fragment.
+
+EXAMPLE 3: MISSED AD
+Input transcript:
+```
 [340.0-342.0] You know what I've been really into lately?
 [342.5-348.0] I've been using this app called Calm and it's been amazing for my sleep.
 [348.5-365.0] They have these sleep stories and meditations... You can try it free for 30 days at calm.com/podcast.
 [365.5-368.0] But anyway, getting back to what we were saying about
+```
 
-Output: [{"start": 340.0, "end": 365.0, "confidence": 0.92, "category": "sponsor", "reason": "Calm app sponsor read -- missed baked-in ad with free trial URL", "end_text": "calm.com/podcast"}]
+Output:
+```json
+{
+  "ads": [
+    {
+      "start": 340.0,
+      "end": 365.0,
+      "start_text": null,
+      "end_text": null,
+      "category": "sponsor",
+      "reason": "Calm app sponsor read",
+      "sponsor_name": "Calm",
+      "confidence": 0.92
+    }
+  ]
+}
+```
 
-CLEAN EPISODE EXAMPLE:
-[no promotional content found in transcript]
+Notice how `start_text` and `end_text` are `null` since both edges are cue-aligned.
 
-Output: []{sponsor_database}"""
+{sponsor_database}
+""".strip()
 
 
 # Both reviewer prompts use placeholder substitution via _render_prompt;
 # never .format() these strings directly (the JSON examples contain literal
 # curly braces that .format() would attempt to interpolate).
-DEFAULT_REVIEW_PROMPT = """You are reviewing a candidate advertisement that has already been detected in a podcast episode. The transcript shows the candidate ad clearly marked, with up to 60 seconds of context before and after.
+DEFAULT_REVIEW_PROMPT = """
+You are reviewing a candidate advertisement that has already been detected in a podcast episode. The transcript shows the candidate ad clearly marked, with up to 60 seconds of context before and after.
 
-Your job is to return the corrected ad segment, OR an empty array if it is not actually an ad. Treat this exactly like ad detection on a single short window: you are emitting the ad object that should be cut from the audio, with start and end timestamps, or no object at all.
+Your job is to return the corrected ad segment. Treat this exactly like ad detection on a single short window: you are emitting the ad object that should be cut from the audio, with start and end timestamps, or no object at all.
 
-KEEP THE AD (return one segment): The candidate is a real-world advertisement that should be cut. Use the original start and end if they are already correct. Adjust them when the boundaries clip into show content or miss part of the ad:
+CANDIDATE SPAN IS AN AD:
+The candidate is a real-world advertisement. Use the original start and end if they are already correct. Adjust them when the boundaries clip into show content or miss part of the ad:
 - Start should land at or just before the first promotional word or transition phrase ("let's take a break", "and now a word from", "this episode is brought to you by")
 - End should land at or just after the last call to action (final URL, promo code, sign-off), not in the middle of show content that follows
-- Read adjusted timestamps off the [start-end] stamps on the transcript lines themselves, including the context lines outside the candidate markers. Never interpolate a boundary
 - Adjusted boundaries must stay within {max_boundary_shift_seconds} seconds of the original boundaries in either direction
 
 PARTIAL SPAN: if any part of the candidate span is not ad content (show content before the ad starts or after it ends), you MUST return adjusted start and end timestamps covering only the ad portion. Never return the original boundaries and describe the trim only in the "reason" text: the reason is prose for a human, and only the start and end numbers control the cut.
 
-DROP THE AD (return empty array): The candidate is not a real-world advertisement. Reject cases:
+DROP THE AD:
+The candidate is not a real-world advertisement. Reject cases:
 - A guest discussing their own work, book, or project in the context of the interview
 - The host organically mentioning their own other shows, social media, or Patreon as part of conversational flow (not a produced segment)
 - Brand names mentioned in passing as part of genuine topic discussion, news coverage, or product reviews
 - A comedic bit or fictional sponsor read that is part of the show's creative content (no real product behind it)
 - Silence, pauses, or audio production artifacts with no promotional transcript content
 - Topic transitions or content gaps without promotional language
-You may also return [{"is_ad": false, "reason": "why"}] instead of an empty array to reject explicitly.
 
 DO NOT REJECT (these ARE real ads, keep them):
 - Host-read sponsor segments, including ones without promo codes
@@ -336,15 +401,33 @@ A line marked as audio with no transcript inside the candidate may be speech the
 WHEN IN DOUBT: Keep the ad with original boundaries unchanged. Do not drop unless you have clear evidence from the transcript that the segment is not a real-world advertisement. Do not adjust unless the boundary error is unambiguous from the surrounding context. The cost of leaving a real ad in the audio (false negative) is higher than the cost of keeping a borderline detection.
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON array. No explanation, no markdown.
+Return only a valid, compact JSON object with no Markdown wrappers or commentary:
 
-Each kept ad: {"is_ad": BOOLEAN_TRUE_ONLY_IF_REAL_AD, "start": FLOAT_SECONDS, "end": FLOAT_SECONDS, "confidence": FLOAT_0_TO_1, "reason": "brief description"}
+{
+  "ads": [
+    {
+      "is_ad": boolean,
+      "start": number or null,
+      "end": number or null,
+      "reason": string,
+      "confidence": number
+    }
+  ]
+}
 
-Set "is_ad" true only when the span is a real advertisement to cut. Set it false, or return an empty array, when it is not.
+FIELD NOTES:
+- `is_ad`: Boolean indicating whether the candidate segment is a real advertisement.
+- `start`, `end`: Full cue boundary timestamps or indices (no interpolation). `null` if `is_ad` is false.
+- `reason`: Brief explanation for the decision.
+- `confidence`: Lowest-certainty component score (is_ad, boundary, reason). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
 
-ALL values for "start", "end", and "confidence" MUST be numeric (float). Never use strings like "high", "low", "medium", or percentages like "95%". Examples: "start": 45.0, "end": 82.0, "confidence": 0.95
+EXAMPLES:
 
-EXAMPLE - KEEP UNCHANGED (boundaries are correct):
+Note: The output JSON in these examples is formatted in code blocks for readability only. You must output raw compact JSON *without* code blocks or extra commentary.
+
+EXAMPLE 1: KEEP UNCHANGED (boundaries are correct)
+Input transcript candidate:
+```
 Original boundaries: 1245.00s - 1320.50s.
 [1240.0-1245.0] We will pick that thread back up in a minute.
 >>> CANDIDATE AD START [1245.0s] >>>
@@ -353,10 +436,26 @@ Original boundaries: 1245.00s - 1320.50s.
 [1315.0-1320.5] Visit betterhelp.com slash podcast. That's betterhelp.com slash podcast.
 <<< CANDIDATE AD END [1320.5s] <<<
 [1320.5-1325.0] Anyway, back to what we were talking about.
+```
 
-Output: [{"is_ad": true, "start": 1245.0, "end": 1320.5, "confidence": 0.95, "reason": "Confirmed BetterHelp host-read sponsor with clean boundaries"}]
+Output: 
+```json
+{
+  "ads": [
+    {
+      "is_ad": true,
+      "start": 1245.0,
+      "end": 1320.5,
+      "reason": "Confirmed BetterHelp host-read sponsor with clean boundaries",
+      "confidence": 0.95
+    }
+  ]
+}
+```
 
-EXAMPLE - ADJUST BOUNDARIES (start was late, end was early):
+EXAMPLE 2: ADJUST BOUNDARIES (start was late, end was early)
+Input transcript candidate:
+```
 Original boundaries: 100.00s - 130.00s.
 [92.0-95.0] So that wraps up our discussion. Let's take a quick break.
 [95.0-100.0] This episode is brought to you by Athletic Greens.
@@ -366,12 +465,28 @@ Original boundaries: 100.00s - 130.00s.
 <<< CANDIDATE AD END [130.0s] <<<
 [130.0-132.0] That's athleticgreens.com slash podcast.
 [132.0-135.0] Now, back to our conversation.
+```
 
-Both adjusted timestamps are read straight off context lines: 95.0 starts the line before the marker, 132.0 ends the line after it.
+Output:
+```json
+{
+  "ads": [
+    {
+      "is_ad": true,
+      "start": 95.0,
+      "end": 135.0,
+      "reason": "Starts at 95.0s; ends at 135.0s after transition back to content",
+      "confidence": 0.92
+    }
+  ]
+}
+```
+    
+Notice that we included the return-to-episode transition but not the lead-in transition. This is because the lead-in cue also contains non-ad content, so we conservatively exclude it.
 
-Output: [{"is_ad": true, "start": 95.0, "end": 132.0, "confidence": 0.92, "reason": "Started at the transition line at 95.0s; ended at 132.0s after the repeated URL"}]
-
-EXAMPLE - DROP (host mentioning a brand editorially, not an ad):
+EXAMPLE 3: DROP (host mentioning a brand editorially, not an ad)
+Input transcript candidate:
+```
 Original boundaries: 50.00s - 70.00s.
 [45.0-50.0] Have you been following the Apple antitrust case?
 >>> CANDIDATE AD START [50.0s] >>>
@@ -379,57 +494,125 @@ Original boundaries: 50.00s - 70.00s.
 [62.0-70.0] They want the court to force a change to the commission structure.
 <<< CANDIDATE AD END [70.0s] <<<
 [70.0-74.0] What's your take on the proposed remedies?
+```
 
-Output: []{sponsor_database}"""
+Output: 
+```json
+{
+  "ads": [
+    {
+      "is_ad": false,
+      "start": null,
+      "end": null,
+      "reason": "Host mentioning Apple antitrust case editorially, not a sponsor read",
+      "confidence": 0.85
+    }
+  ]
+}
+```
+
+{sponsor_database}
+""".strip()
 
 
-DEFAULT_RESURRECT_PROMPT = """You are taking a second look at a segment that the validator already rejected for low confidence. The transcript shows the candidate clearly marked, with up to 60 seconds of context before and after.
+DEFAULT_RESURRECT_PROMPT = """
+You are taking a second look at a segment that the validator already rejected for low confidence. The transcript shows the candidate clearly marked, with up to 60 seconds of context before and after.
 
 Your job: if the transcript shows this is actually an ad that should be cut, return the ad segment. If the validator was right and it is not an ad, return an empty array.
 
-RESURRECT (return one segment): The validator was wrong. The segment is a real-world advertisement and should be cut. Resurrect when:
+RESURRECT:
+The validator was wrong. The segment is a real-world advertisement and should be cut. Resurrect when:
 - The transcript clearly contains promotional language: sponsor name + value proposition + call to action, or polished marketing copy with concentrated brand messaging
 - The segment matches the structure of an ad (transition in, sponsor read or platform promo, return to content) even if the validator marked confidence as low
 - It is a short brand tagline ad (15-45 seconds) without promo codes, but with concentrated marketing language
 - It is a hosting-platform pre/post-roll or cross-promo for another podcast in the network
 
-KEEP REJECTED (return empty array): Agree with the validator. The segment is not a real-world advertisement. Match the same not-an-ad criteria the main reviewer uses:
+KEEP REJECTED:
+Agree with the validator. The segment is not a real-world advertisement. Match the same not-an-ad criteria the main reviewer uses:
 - A guest discussing their own work in the context of the interview
 - Host organically mentioning their own other shows or social media in conversation
 - Brand names mentioned in passing as part of editorial topic discussion
 - Comedic bits or fictional sponsor reads in the show's creative content
 - Silence, pauses, or topic transitions with no promotional transcript content
-You may also return [{"is_ad": false, "reason": "why"}] instead of an empty array to reject explicitly.
 
 AUDIO CUE SIGNALS: if a labelled audio cue brackets or sits next to the rejected segment, treat it as strong evidence a break happened there; a cue-bracketed segment with even a single sponsor mention is usually a real ad the validator was too cautious about -- resurrect it.
 
 WHEN IN DOUBT: Agree with the validator and return empty. Only resurrect when the transcript shows clear evidence that this is a real ad. The validator already saw reason to flag low confidence; do not override without evidence.
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON array. No explanation, no markdown.
+Return only a valid, compact JSON object with no Markdown wrappers or commentary:
 
-Each resurrected ad: {"is_ad": BOOLEAN_TRUE_ONLY_IF_REAL_AD, "start": FLOAT_SECONDS, "end": FLOAT_SECONDS, "confidence": FLOAT_0_TO_1, "reason": "brief description"}
+{
+  "ads": [
+    {
+      "is_ad": boolean,
+      "start": number or null,
+      "end": number or null,
+      "reason": string,
+      "confidence": number
+    }
+  ]
+}
 
-Set "is_ad" true only when the span is a real advertisement to cut. Set it false, or return an empty array, when it is not.
+FIELD NOTES:
+- `is_ad`: Boolean indicating whether the candidate segment is a real advertisement.
+- `start`, `end`: Full cue boundary timestamps or indices (no interpolation). `null` if `is_ad` is false.
+- `reason`: Brief explanation for the decision.
+- `confidence`: Lowest-certainty component score (is_ad, boundary, reason). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
 
-ALL values for "start", "end", and "confidence" MUST be numeric (float). Never use strings like "high", "low", "medium", or percentages like "95%". Examples: "start": 45.0, "end": 82.0, "confidence": 0.95
+EXAMPLES:
 
-EXAMPLE - RESURRECT (validator missed a real ad):
+Note: The output JSON in these examples is formatted in code blocks for readability only. You must output raw compact JSON *without* code blocks or extra commentary.
+
+EXAMPLE 1: RESURRECT (candidate is a real ad)
+Input:
+```
 Validator-rejected segment: 666.7s - 674.3s (validator confidence 0.71)
 [660.0s] So that's our take on the antitrust case.
 [666.7s] Hosted on Acast. See acast dot com slash privacy for more information.
 [674.5s] Welcome back, today we're talking about the Switch 2 launch.
+```
 
-Output: [{"is_ad": true, "start": 666.7, "end": 674.3, "confidence": 0.92, "reason": "Acast hosting platform post-roll, clearly promotional and not editorial"}]
+Output:
+```json
+{
+  "ads": [
+    {
+      "is_ad": true,
+      "start": 666.7,
+      "end": 674.3,
+      "reason": "Acast hosting platform post-roll, clearly promotional and not editorial",
+      "confidence": 0.92
+    }
+  ]
+}
+```
 
-EXAMPLE - KEEP REJECTED (validator was right):
+EXAMPLE 2: KEEP REJECTED (candidate is not a ad)
+Input:
+```
 Validator-rejected segment: 200.0s - 215.0s (validator confidence 0.65)
 [195.0s] We've been talking about Apple's new privacy framework.
 [200.0s] Apple says the new framework gives users more control over data sharing.
 [215.0s] But critics argue Apple still has too much power over the app store.
 [220.0s] Let's get into the developer reaction next.
+```
 
-Output: []{sponsor_database}"""
+Output:
+```json
+{
+  "ads": [{
+    "is_ad": false,
+    "start": null,
+    "end": null,
+    "reason": "Editorial content discussing Apple's privacy framework; not an advertisement",
+    "confidence": 0.91
+  }]
+}
+```
+
+{sponsor_database}
+""".strip()
 
 
 # Chapter topic-detection prompt. Rendered via utils.prompt.render_prompt with

@@ -44,8 +44,8 @@ _ID_LINE = re.compile(r"^\s*\[(\d+)\]\s?(.*)$")
 # Gap cue rows that segment-ID prompts insert between transcript rows (#884).
 _GAP_LINE = re.compile(r"^\s*\[gap\b[^\]]*\]\s*$")
 # Transcript heading: "Transcript:" // old style
-#                  or "Transcript (with [{start}-{end}] timestamp, in seconds):"
-#                  or "Transcript (with [{id}] prefix):"
+#                  or "Transcript (with timestamps):"
+#                  or "Transcript (with indexes):"
 _TRANSCRIPT_HEADING = re.compile(r"(?m)^Transcript(?: \(with [^\)\n]+?\))?:[ \t\r]*$")
 
 # Candidate markers: ad_reviewer._build_user_prompt wraps every review candidate in
