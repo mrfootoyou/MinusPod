@@ -59,10 +59,17 @@ _SPONSOR_FIELD_STEMS = frozenset(_singular(f) for f in SPONSOR_PRIORITY_FIELDS)
 
 # User prompt template (not configurable via UI - just formats the transcript)
 # Description is optional - may contain sponsor lists, chapter markers, or content context
-USER_PROMPT_TEMPLATE = """Podcast: {podcast_name}
+USER_PROMPT_TEMPLATE = """
+Podcast: {podcast_name}
 Episode: {episode_title}
 {description_section}
-{transcript}"""
+
+{transcript}
+
+{audio_context}
+
+{window_context}
+"""
 
 def create_windows(segments: list[dict], window_size: float = None,
                    overlap: float = None) -> list[dict]:
@@ -132,6 +139,46 @@ def create_windows(segments: list[dict], window_size: float = None,
     return windows
 
 
+def _build_window_context(
+    window_index: int,
+    total_windows: int,
+    window_start: float,
+    window_end: float,
+) -> str:
+    """Builds the window context prompt for a partial transcript.
+    Returns:
+        A string containing the window context instructions for the partial
+        transcript or an empty string if there is only a single window (i.e.,
+        not partial).
+    """
+    if (total_windows <= 1): 
+        return "" # No context needed for a single window
+
+    window_context = (
+        f"=== WINDOW {window_index + 1}/{total_windows}: "
+        f"{window_start/60:.1f}-{window_end/60:.1f} minutes ==="
+    )
+    if (window_index > 0 and window_index + 1 < total_windows):
+        # save a few tokens by combining the two instructions
+        window_context += (
+            "If the first or last segment appears to begin or end outside this "
+            "window, append \"continues from previous\" or \"continues in next\" "
+            "to the `reason` field.\n"
+        )
+    elif (window_index > 0):
+        window_context += (
+            "If the first segment appears to begin outside this window, append "
+            "\"continues from previous\" to the `reason` field.\n"
+        )
+    elif (window_index + 1 < total_windows):
+        window_context += (
+            "If the last segment appears to end outside this window, append "
+            "\"continues in next\" to the `reason` field.\n"
+        )
+
+    return window_context
+
+
 def format_window_prompt(
     podcast_name: str,
     episode_title: str,
@@ -149,70 +196,29 @@ def format_window_prompt(
     `description_section` and `audio_context` are pre-built strings so the
     benchmark can call this without DB or audio-analysis state. Production
     callers assemble both then pass them in.
-
-    `addressing_mode` selects the window-context rules appended after the
-    header: 'timestamps' (default) emits the original three bullets telling
-    the model to use absolute timestamps, byte-identical to before this
-    parameter existed; 'segment_ids' (issue: hushpod adoption) emits
-    SEGMENT_ID_WINDOW_RULES instead of those bullets -- never both, so the
-    prompt never tells the model to use and never use timestamps in the same
-    message. Callers that never pass it (benchmark, keep-content windows)
-    get 'timestamps' behavior unchanged.
     """
     if addressing_mode == "segment_ids":
-        transcript = "Transcript (with [{id}] prefix):\n"
+        transcript = "Transcript (with indexes):\n"
     else:
-        transcript = "Transcript (with [{start}-{end}] timestamp, in seconds):\n"
+        transcript = "Transcript (with timestamps):\n"
     transcript += "\n".join(transcript_lines)
 
-    header = (
-        f"\n\n=== WINDOW {window_index + 1}/{total_windows}: "
-        f"{window_start/60:.1f}-{window_end/60:.1f} minutes ==="
+    window_context = _build_window_context(
+        window_index=window_index,
+        total_windows=total_windows,
+        window_start=window_start,
+        window_end=window_end,
     )
-    if addressing_mode == "segment_ids":
-        rules = SEGMENT_ID_WINDOW_RULES
-    else:
-        rules = (
-            "\n- Use absolute timestamps from transcript (as shown in brackets)"
-            "\n- If an ad starts before this window, use the first timestamp with note \"continues from previous\""
-            f"\n- If an ad extends past this window, use {window_end:.1f} with note \"continues in next\"\n"
-        )
-    window_context = header + rules
     return finalize_prompt(
         strip_comments_from_prompt(USER_PROMPT_TEMPLATE).format(
             podcast_name=podcast_name,
             episode_title=episode_title,
             description_section=description_section,
             transcript=transcript,
-        ) + audio_context + window_context
+            audio_context=audio_context,
+            window_context=window_context,
+        )
     )
-
-
-SEGMENT_ID_SYSTEM_SECTION = """
-
-ADDRESSING MODE: SEGMENT IDS
-The transcript is a numbered list; each line starts with its [id]. For every
-detection you report, replace the "start" and "end" timestamp fields with
-integer "start_id" and "end_id" fields: the ids of the FIRST and LAST
-transcript lines of the ad, inclusive. Refer to lines ONLY by the ids shown.
-Never output timestamps and never invent ids that do not appear in the
-transcript. All other rules (categories, confidence, reason) are unchanged.
-
-Ignore any earlier instruction to read [Xs] timestamp markers or to output
-numeric "start"/"end" seconds: in this mode the transcript lines carry [id]
-numbers only, and the JSON fields "start"/"end" are replaced by integer
-"start_id"/"end_id". All other rules (categories, confidence, reason) still
-apply."""
-
-
-SEGMENT_ID_WINDOW_RULES = (
-    "\n- Report start_id/end_id integers from the [id] brackets, "
-    "never timestamps"
-    "\n- If an ad starts before this window, use this window's first id "
-    "with note \"continues from previous\""
-    "\n- If an ad extends past this window, use this window's last id "
-    "with note \"continues in next\"\n"
-)
 
 
 AD_QUOTE_ANCHOR_SECTION = """
@@ -734,8 +740,8 @@ def parse_id_ads_from_response(response_text: str, slug: str = None,
     for obj in raw:
         if not isinstance(obj, dict):
             continue
-        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id'))
-        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id'))
+        sid_lo = _int_field(obj, ('start_id', 'startid', 'start_segment_id', 'start'))
+        sid_hi = _int_field(obj, ('end_id', 'endid', 'end_segment_id', 'end'))
         if sid_lo is None or sid_hi is None:
             skipped_no_id += 1
             continue
@@ -877,8 +883,6 @@ AD_DETECTION_JSON_SCHEMA = {
                 "properties": {
                     "start": {"type": "number"},
                     "end": {"type": "number"},
-                    "start_id": {"type": "integer"},
-                    "end_id": {"type": "integer"},
                     "start_text": {"type": "string"},
                     # The prompt requires end_text on every segment and the
                     # sponsor extractors read these names; a schema-enforcing

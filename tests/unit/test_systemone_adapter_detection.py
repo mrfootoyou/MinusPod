@@ -63,7 +63,7 @@ def _sponsor_lookup(service):
 def test_parse_transcript_skips_gap_cue_rows():
     """Gap cue rows between segment-ID rows must not truncate the transcript."""
     prompt = (
-        "Transcript:\n"
+        "Transcript (with indexes):\n"
         "[0] First line.\n"
         "[gap of 2.0s (no transcript, likely silence, jingle, or unintelligible speech)]\n"
         "[1] Second line.\n"

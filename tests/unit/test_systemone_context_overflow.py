@@ -15,7 +15,7 @@ from utils.llm_call import LOSS_CONTEXT_OVERFLOW, window_loss_class
 
 LINES = [f"[{i}] {'filler words ' * 20}line {i}." for i in range(40)]
 AD_SIDS = {10, 11, 12}
-PROMPT = "Transcript:\n" + "\n".join(LINES) + "\n"
+PROMPT = "Transcript (with indexes):\n" + "\n".join(LINES) + "\n"
 
 
 def _overflow():
