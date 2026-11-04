@@ -206,7 +206,7 @@ def format_window_prompt(
     context (before the transcript) and may contain any or all of the
     following preformatted sections:
       - Podcast description
-      - Podcast operator notes
+      - Podcast user notes
       - Episode description
       - Sponsor history
       - Learned ad-break hints

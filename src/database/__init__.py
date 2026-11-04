@@ -232,7 +232,7 @@ Orphaned fragments are also exempt from the minimum duration consolidation rule 
 - **Conservative clipping**: Bound non-main segments narrowly. When edges are blurry, err toward keeping audio in `main_content`.
 - **Cue spans (`start`/`end`)**: Must cover the full cue span containing the segment. Use the first cue's start time/index and the last cue's end time/index. Do not interpolate.
 - **Mid-cue overlap**: If a cue contains boundaries between multiple segments, include that cue in the span of every segment it overlaps.
-- **Mid-cue boundary quotes (`start_text`/`end_text`)**: If the segment begins or ends mid-cue, then quote the first 6 and last 6 words of the segment text. If there are fewer than 6 words, quote all available. A 'word' is strictly defined as an alphanumeric sequence (`[^\W_]+`). Ex: "10,000 B.C. is pre-history" = 7 words.
+- **Mid-cue boundary quotes (`start_text`/`end_text`)**: If the segment begins or ends mid-cue, then quote the first 6 and last 6 words of the segment text. If there are fewer than 6 words, quote all available. A 'word' is strictly defined as an alphanumeric sequence (`[^\\W_]+`). Ex: "10,000 B.C. is pre-history" = 7 words.
 - **Promotional scope**: Include lead-in disclosures ("sponsored by..."), offers, URLs, codes, and disclaimers.
 - **Intros & Cold Opens**: Substantive cold opens remain `main_content`. `intro` ends at guest introductions or substantive discussion; later previews are `teaser`.
 

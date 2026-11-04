@@ -2,11 +2,19 @@
 import sqlite3
 from unittest.mock import MagicMock
 
+import pytest
+
 
 from ad_detector import get_static_system_prompt
 from utils.prompt import (
     SPONSOR_DATABASE_HEADER,
+    format_prompt_code_block,
+    format_prompt_heading,
+    format_prompt_list,
+    format_prompt_list_numbered,
+    format_prompt_section,
     format_sponsor_block,
+    indent_text,
     render_prompt,
 )
 from database import (
@@ -16,7 +24,165 @@ from database import (
     DEFAULT_VERIFICATION_PROMPT,
 )
 
+class TestIndentText:
+    def test_empty_string(self):
+        assert indent_text("", 0) == ""
+        assert indent_text("", "") == ""
+        assert indent_text("", 2) == ""
+        assert indent_text("", "  ") == ""
 
+    def test_indent_text_with_integer_indent(self):
+        assert indent_text("line1", 2) == "  line1"
+        assert indent_text("line1\nline2", 2) == "  line1\n  line2"
+        assert indent_text("line1\nline2\n", 2) == "  line1\n  line2\n"
+
+    def test_indent_text_with_string_indent(self):
+        assert indent_text("line1", "  ") == "  line1"
+        assert indent_text("line1\nline2", "  ") == "  line1\n  line2"
+        assert indent_text("line1\nline2\n", "  ") == "  line1\n  line2\n"
+
+    def test_indent_empty_lines(self):
+        assert indent_text("", "  ", indent_empty=True) == "  "
+        assert indent_text("\n\n", "  ", indent_empty=True) == "  \n  \n  "
+
+    def test_skip_first_line(self):
+        assert indent_text("Line1\nLine2\n", "  ", skip_first=True) == "Line1\n  Line2\n"
+        assert indent_text("", "  ", skip_first=True, indent_empty=True) == ""
+        assert indent_text("\n\n", "  ", skip_first=True, indent_empty=True) == "\n  \n  "
+
+class TestFormatPromptHeading:
+    def test_basics(self):
+        assert format_prompt_heading("Test", 1) == "# Test\n\n"
+        assert format_prompt_heading("\n  Test \n", 1) == "# Test\n\n"
+        assert format_prompt_heading("Test", 2) == "## Test\n\n"
+        assert format_prompt_heading("Test", 6) == "###### Test\n\n"
+        assert format_prompt_heading("Test", 7) == "###### Test\n\n"
+
+    def test_clean_line(self):
+        assert format_prompt_heading("Te\t\tst", 1) == "# Te st\n\n"
+
+    def test_with_indent(self):
+        assert format_prompt_heading("Test", 1, indent=2) == "  # Test\n\n"
+
+    def test_empty_heading_raises(self):
+        with pytest.raises(ValueError):
+            format_prompt_heading("", 1)
+        with pytest.raises(ValueError):
+            format_prompt_heading(" \t", 1)
+
+    def test_heading_level_too_low_raises(self):
+        with pytest.raises(ValueError):
+            format_prompt_heading("Test", 0)
+
+class TestFormatPromptSection:
+    def test_basics(self):
+        assert format_prompt_section("Section") == "**Section:**\n"
+        assert format_prompt_section("\n  Section \n") == "**Section:**\n"
+        assert format_prompt_section("Section", "text") == "**Section:**\ntext\n"
+        assert format_prompt_section("Section", "\n  text \n ") == "**Section:**\ntext\n"
+
+    def test_clean_line(self):
+        assert format_prompt_section("Sec\t\ttion", "\n  text \n ") == "**Sec tion:**\ntext\n"
+
+    def test_with_indent(self):
+        assert format_prompt_section("Section", "text", indent=2) == "  **Section:**\n  text\n"
+        assert format_prompt_section("Section", "line1\nline2", indent=2) == "  **Section:**\n  line1\n  line2\n"
+
+    def test_empty_section_title_raises(self):
+        with pytest.raises(ValueError):
+            format_prompt_section("", "text")
+        with pytest.raises(ValueError):
+            format_prompt_section(" \t", "text")
+
+class TestFormatPromptList:
+    def test_basics(self):
+        assert format_prompt_list([]) == "\n"
+        assert format_prompt_list(["item1"]) == "- item1\n"
+        assert format_prompt_list(["item1", "item2"]) == "- item1\n- item2\n"
+        assert format_prompt_list(["\n item1 \n ", "  item2\nline2  \n"]) == "- item1\n- item2\n  line2\n"
+
+    def test_with_custom_bullet(self):
+        assert format_prompt_list(["item1", "item2"], bullet='*') == "* item1\n* item2\n"
+
+    def test_with_not_skip_empty_items(self):
+        assert format_prompt_list(["item1", "", "item3"], skip_empty=False) == "- item1\n- \n- item3\n"
+
+    def test_with_indent(self):
+        assert format_prompt_list([], indent=2) == "\n"
+        assert format_prompt_list(["item1"], indent=2) == "  - item1\n"
+        assert format_prompt_list(["item1", "item2\n\nline3"], indent=2) == "  - item1\n  - item2\n\n    line3\n"
+
+class TestFormatPromptListNumbered:
+    def test_basics(self):
+        assert format_prompt_list_numbered([]) == "\n"
+        assert format_prompt_list_numbered(["item1"]) == "1. item1\n"
+        assert format_prompt_list_numbered(["item1", "item2"]) == "1. item1\n2. item2\n"
+        assert format_prompt_list_numbered(["\n item1 \n ", "  item2\nline2  \n"]) == "1. item1\n2. item2\n   line2\n"
+
+    def test_with_start_at(self):
+        assert format_prompt_list_numbered(["item1", "item2"], start_at=3) == "3. item1\n4. item2\n"
+        assert format_prompt_list_numbered(["item1", "item2"], start_at=-20) == "-20. item1\n-19. item2\n"
+
+    def test_with_custom_number_format(self):
+        assert format_prompt_list_numbered(["item1", "item2"], number_format='{0})') == "1) item1\n2) item2\n"
+
+    def test_with_not_skip_empty_items(self):
+        assert format_prompt_list_numbered(["item1", "", "item3"], skip_empty=False) == "1. item1\n2. \n3. item3\n"
+
+    def test_with_indent(self):
+        assert format_prompt_list_numbered([], indent=2) == "\n"
+        assert format_prompt_list_numbered(["item1"], indent=2) == "  1. item1\n"
+        assert format_prompt_list_numbered(["item1", "item2\n\nline3"], start_at=100, indent=2) == "  100. item1\n  101. item2\n\n       line3\n"
+
+class TestFormatPromptCodeBlock:
+    def test_basics(self):
+        assert format_prompt_code_block('') == '```text\n\n```\n'
+        assert format_prompt_code_block('print("Hello")') == '```text\nprint("Hello")\n```\n'
+
+    def test_preserves_whitespace(self):
+        assert format_prompt_code_block('  print("Hello")\n  exit 1') == \
+            '```text\n  print("Hello")\n  exit 1\n```\n'
+
+    def test_with_language(self):
+        assert format_prompt_code_block('foo', language='') == '```\nfoo\n```\n'
+        assert format_prompt_code_block('', language='sh') == '```sh\n\n```\n'
+        assert format_prompt_code_block('print("Hello")', language='sh') == \
+            '```sh\nprint("Hello")\n```\n'
+        assert format_prompt_code_block('', language='foo\t\nbar') == '```foo-bar\n\n```\n'
+
+    def test_with_indent(self):
+        assert format_prompt_code_block('print("Hello")', indent=2) == \
+            "  ```text\n  print(\"Hello\")\n  ```\n"
+
+    def test_with_fence_char(self):
+        assert format_prompt_code_block('print("Hello")', fence_char='~') == \
+            "~~~text\nprint(\"Hello\")\n~~~\n"
+
+    def test_with_nested_code_block(self):
+        markdown = (
+            'Example:\n'
+            '~~~sh\n'
+            'print("Hello")\n'
+            '~~~'
+        )
+        text = format_prompt_code_block(markdown, language='markdown', 
+                                       fence_char='~', indent=2)
+        assert text == (
+            '  ~~~~markdown\n'
+            '  Example:\n'
+            '  ~~~sh\n'
+            '  print("Hello")\n'
+            '  ~~~\n'
+            '  ~~~~\n'
+        )
+
+    def test_invalid_fence_char_raises(self):
+        with pytest.raises(ValueError):
+            format_prompt_code_block("code", fence_char='')
+        with pytest.raises(ValueError):
+            format_prompt_code_block("code", fence_char='aa')
+
+        
 def test_render_prompt_substitutes_single_brace_placeholders():
     out = render_prompt('Hello {name}', name='world')
     assert out == 'Hello world'
@@ -24,8 +190,8 @@ def test_render_prompt_substitutes_single_brace_placeholders():
 
 def test_render_prompt_preserves_literal_double_braces():
     """Double-braced JSON examples in default prompts must not be touched."""
-    out = render_prompt('JSON: {{"start": 1.0}} sub={x}', x='Y')
-    assert out == 'JSON: {{"start": 1.0}} sub=Y'
+    out = render_prompt('JSON: {"start": 1.0} sub={x}', x='Y')
+    assert out == 'JSON: {"start": 1.0} sub=Y'
 
 
 def test_render_prompt_drops_missing_placeholders_silently():
