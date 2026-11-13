@@ -219,10 +219,16 @@ def test_format_sponsor_block_wraps_with_header():
 
 def test_default_system_prompt_has_sponsor_placeholder():
     assert '{sponsor_database}' in DEFAULT_SYSTEM_PROMPT
+    assert '{sponsor_watchlists}' in DEFAULT_SYSTEM_PROMPT
+    assert '{output_format}' in DEFAULT_SYSTEM_PROMPT
+    assert '{examples}' in DEFAULT_SYSTEM_PROMPT
 
 
 def test_default_verification_prompt_has_sponsor_placeholder():
     assert '{sponsor_database}' in DEFAULT_VERIFICATION_PROMPT
+    assert '{sponsor_watchlists}' in DEFAULT_VERIFICATION_PROMPT
+    assert '{output_format}' in DEFAULT_VERIFICATION_PROMPT
+    assert '{examples}' in DEFAULT_VERIFICATION_PROMPT
 
 
 def test_default_review_prompt_has_both_placeholders():
