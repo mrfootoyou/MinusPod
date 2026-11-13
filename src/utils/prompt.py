@@ -10,7 +10,9 @@ import re
 from config import DETECTION_NOTES_MAX_CHARS
 
 SPONSOR_DATABASE_HEADER = (
-    "\n\nDYNAMIC SPONSOR DATABASE (current known sponsors - treat as high confidence):\n"
+    "## Recent sponsors\n"
+    "\n"
+    "Segments referencing these names are likely to be sponsored segments:\n"
 )
 
 
@@ -47,12 +49,13 @@ def format_sponsor_block(sponsor_list: str) -> str:
     dangling header on prompts whose ``{sponsor_database}`` placeholder is
     left in place.
     """
+    sponsor_list = sponsor_list.strip() if sponsor_list else ""
     if not sponsor_list:
         return ""
     return SPONSOR_DATABASE_HEADER + sponsor_list
 
 
-OVERRIDE_HEADER = "\n\nADDITIONAL INSTRUCTIONS (these take precedence):\n"
+OVERRIDE_HEADER = "\n\n## Additional instructions (these take precedence)\n\n"
 
 
 def apply_override(prompt: str, override: str) -> str:
@@ -64,11 +67,13 @@ def apply_override(prompt: str, override: str) -> str:
     control its placement and the wording around it. Otherwise the override is
     appended under a precedence header.
     """
-    if not override or not override.strip():
-        return prompt.replace('{override}', '') if '{override}' in prompt else prompt
+    override = override.strip() if override else ""
     if '{override}' in prompt:
         return prompt.replace('{override}', override)
-    return prompt + OVERRIDE_HEADER + override
+    return (
+        prompt + OVERRIDE_HEADER + override
+        if override else prompt
+    )
 
 def strip_html(text: str|None) -> str:
     """Convert simple HTML to plain text for show-note timestamp parsing.

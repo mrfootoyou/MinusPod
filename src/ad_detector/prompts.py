@@ -24,6 +24,9 @@ from utils.text import truncate
 from utils.time import parse_timestamp
 from utils.llm_response import extract_json_ads_array
 from utils.constants import (
+    DEFAULT_SYSTEM_PROMPT, DETECTION_PROMPT_SPONSOR_WATCHLISTS,
+    DETECTION_PROMPT_OUTPUT_FORMAT, DETECTION_PROMPT_EXAMPLES,
+    SEED_SPONSORS,
     AUDIO_ECHO_RE, INVALID_SPONSOR_VALUES, STRUCTURAL_FIELDS,
     SPONSOR_PRIORITY_FIELDS, SPONSOR_PATTERN_KEYWORDS,
     SPONSOR_MAX_NAME_CHARS, REASON_DESCRIPTION_MAX,
@@ -291,12 +294,13 @@ def get_static_system_prompt() -> str:
     Used by the offline LLM benchmark. Production reads stored prompts and
     merges DB-derived sponsors via ``AdDetector.get_system_prompt`` instead.
     """
-    from utils.constants import DEFAULT_SYSTEM_PROMPT
-    from utils.constants import SEED_SPONSORS
     sponsor_list = ', '.join(s['name'] for s in SEED_SPONSORS)
     return render_prompt(
         strip_comments_from_prompt(DEFAULT_SYSTEM_PROMPT),
         sponsor_database=format_sponsor_block(sponsor_list),
+        sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+        output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+        examples=strip_comments_from_prompt(DETECTION_PROMPT_EXAMPLES),
     )
 
 

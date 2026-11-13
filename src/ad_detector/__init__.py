@@ -16,6 +16,7 @@ from typing import NamedTuple
 
 from audio_enforcer import AudioEnforcer
 from cancel import _check_cancel
+from database import DEFAULT_VERIFICATION_PROMPT, VERIFICATION_PROMPT_EXAMPLES
 from llm_client import (
     get_llm_client, get_api_key, LLMClient,
     is_connectivity_error, is_retryable_error, is_not_found_error,
@@ -102,6 +103,10 @@ from sponsor_service import SponsorService
 from text_pattern_matcher import is_defined_pattern
 from text_recurrence import format_recurrence_hint
 from utils.constants import (
+    DEFAULT_SYSTEM_PROMPT,
+    DETECTION_PROMPT_EXAMPLES,
+    DETECTION_PROMPT_OUTPUT_FORMAT,
+    DETECTION_PROMPT_SPONSOR_WATCHLISTS,
     INVALID_SPONSOR_VALUES,
     KNOWN_SHORT_BRANDS, canonical_sponsor, is_brand_token,
     LEARNING_MIN_CONFIDENCE, LEARNING_MIN_CONFIDENCE_LONG,
@@ -1006,9 +1011,14 @@ class AdDetector:
         except Exception as e:
             logger.warning(f"Could not load system prompt from DB: {e}")
         if not prompt:
-            from utils.constants import DEFAULT_SYSTEM_PROMPT
             prompt = DEFAULT_SYSTEM_PROMPT
         prompt = strip_comments_from_prompt(prompt)
+        prompt = render_prompt(
+            prompt, 
+            sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+            output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+            examples=strip_comments_from_prompt(DETECTION_PROMPT_EXAMPLES),
+        )
         prompt = self._render_with_sponsors(prompt, 'seed_sponsors_detection')
         prompt = self._apply_pass_override(prompt, 'system_prompt_override')
         return finalize_prompt(prompt)
@@ -1023,9 +1033,14 @@ class AdDetector:
         except Exception as e:
             logger.warning(f"Could not load verification prompt from DB: {e}")
         if not prompt:
-            from database import DEFAULT_VERIFICATION_PROMPT
             prompt = DEFAULT_VERIFICATION_PROMPT
         prompt = strip_comments_from_prompt(prompt)
+        prompt = render_prompt(
+            prompt, 
+            sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+            output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+            examples=strip_comments_from_prompt(VERIFICATION_PROMPT_EXAMPLES),
+        )
         prompt = self._render_with_sponsors(prompt, 'seed_sponsors_verification')
         prompt = self._apply_pass_override(prompt, 'verification_prompt_override')
         return finalize_prompt(prompt)

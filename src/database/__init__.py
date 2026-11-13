@@ -183,12 +183,7 @@ You are a JSON API for segmenting podcast transcripts.
 
 Identify all non-main content segments in a podcast transcript and output a compact JSON object.
 
-<!-- BEGIN Verification Customization -->
-Note: This is the **second pass** over the transcript. Ads and other unwanted segments have already been cut. However, the first-pass may have missed some segments, in-whole or in-part. Be especially vigilant for "orphaned fragments" — short segments that appear disconnected from the surrounding context. Examples include:
-- Out-of-context URLs, promo codes, calls to action
-- Out-of-place sponsor mentions: "that's [brand].com", "thanks to [sponsor]"
-- Ad bumpers and in/out cues that survived the first pass.
-<!-- END Verification Customization -->
+Note: This is the **second pass** over the transcript. Ads and other unwanted segments have already been cut, although some segments may have been missed, in-whole or in-part. If the first pass was accurate and complete, this pass should identify no additional segments.
 
 Input transcript use one of two cue formats:
 - **Timestamped**: `[start_time - end_time] Text` (seconds).
@@ -206,11 +201,13 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 6. **Filter**: Omit `main_content` from output; callers reconstruct it from gaps.
 7. **Output**: Return a valid JSON object matching the schema.
 
-<!-- BEGIN Verification Customization -->
-**Note**: Orphaned fragments may be especially difficult to classify accurately. Do your best and know that correctly identified orphaned fragments will be merged with their parent segment, making classification less critical.
+## Orphaned fragments
 
-Orphaned fragments are also exempt from the minimum duration consolidation rule since they may be short by their very nature.
-<!-- END Verification Customization -->
+Be especially vigilant for "orphaned fragments" or the remnants of partially cut segments. These are often short utterances that appear disconnected from the surrounding context, including out-of-place URLs, promo codes, calls to action, sponsor mentions, and ad bumpers.
+
+Orphaned fragments are, by definition, part of a larger (cut) segment and are therefore exempt from the minimum duration consolidation rule.
+
+Orphaned fragments may be especially difficult to classify accurately -- you might recognize a sponsor fragment but not know the sponsor name. Do your best and know that correctly identified orphaned fragments will be merged with their parent segment, making classification less critical.
 
 ## Categories
 
@@ -236,49 +233,16 @@ Orphaned fragments are also exempt from the minimum duration consolidation rule 
 - **Promotional scope**: Include lead-in disclosures ("sponsored by..."), offers, URLs, codes, and disclaimers.
 - **Intros & Cold Opens**: Substantive cold opens remain `main_content`. `intro` ends at guest introductions or substantive discussion; later previews are `teaser`.
 
-<!-- BEGIN Verification Customization -->
-<!-- No sponsor watchlists
-## Sponsor Watchlists
-
-Reference lists (non-exhaustive) to identify sponsors and resolve misheard transcript spellings:
-
-### Common Sponsors
-BetterHelp, Athletic Greens, AG1, Shopify, Amazon, Audible, Squarespace, HelloFresh, Factor, NordVPN, ExpressVPN, Mint Mobile, MasterClass, Calm, Headspace, ZipRecruiter, Indeed, LinkedIn Jobs, LinkedIn, Stamps.com, SimpliSafe, Ring, ADT, Casper, Helix Sleep, Purple, Brooklinen, Bombas, Manscaped, Dollar Shave Club, Harry's, Quip, Hims, Hers, Roman, Function of Beauty, Native, Liquid IV, Athletic Brewing, Magic Spoon, Thrive Market, Butcher Box, Blue Apron, DoorDash, Uber Eats, Grubhub, Instacart, Rocket Money, Credit Karma, SoFi, Acorns, Betterment, Wealthfront, PolicyGenius, Lemonade, State Farm, Progressive, Geico, Liberty Mutual, T-Mobile, Visible, FanDuel, DraftKings, BetMGM, Toyota, Hyundai, CarMax, Carvana, eBay Motors, ZocDoc, GoodRx, Care/of, Ritual, Seed, HubSpot, NetSuite, Monday.com, Notion, Canva, Grammarly, Babbel, Rosetta Stone, Blinkist, Raycon, Bose, MacPaw, CleanMyMac, Green Chef, Magic Mind, Honeylove, Cozy Earth, Quince, LMNT, Nutrafol, Aura, OneSkin, Incogni, Gametime, 1Password, Bitwarden, CacheFly, Deel, DeleteMe, Framer, Miro, Monarch Money, OutSystems, Spaceship, Thinkst Canary, ThreatLocker, Vanta, Veeam, Zapier, Zscaler, Capital One, Ford, WhatsApp
-
-### Common Retail/Consumer Brands
-Nordstrom, Macy's, Target, Walmart, Kohl's, Bloomingdale's, JCPenney, TJ Maxx, Home Depot, Lowe's, Best Buy, Costco, Gap, Old Navy, H&M, Zara, Nike, Adidas, Lululemon, Coach, Kate Spade, Michael Kors, Sephora, Ulta, Bath & Body Works, CVS, Walgreens, AutoZone, O'Reilly Auto Parts, Jiffy Lube, Midas, Gold Belly, Farmer's Dog, Caldera Lab, Monster Energy, Red Bull, Whole Foods, Trader Joe's, Kroger, GNC
--->
-<!-- END Verification Customization -->
+<!-- {sponsor_watchlists} -->
 
 {sponsor_database}
 
-## Output Format
+{output_format}
 
-Return only a valid, compact JSON object with no Markdown wrappers or commentary:
+{examples}
+""".strip()
 
-{
-  "segments": [
-    {
-      "start": number,
-      "end": number,
-      "start_text": string or null,
-      "end_text": string or null,
-      "category": "intro | outro | interaction | teaser | recap | transition | sponsor | cross_promo | self_promo",
-      "reason": string,
-      "sponsor_name": string or null,
-      "confidence": number
-    }
-  ]
-}
-
-### Field Notes
-
-- `start`, `end`: Full cue boundary timestamps or indices (no interpolation).
-- `start_text`, `end_text`: Exact boundary text (up to 6 words) iif the segment begins or ends mid-cue; `null` otherwise.
-- `reason`: Brief classification rationale.
-- `sponsor_name`: Canonical brand/offering for promotional segments; `null` otherwise.
-- `confidence`: Lowest-certainty component score (category, boundary, sponsor). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
-
+VERIFICATION_PROMPT_EXAMPLES = """
 ## Example: Mid-Cue Boundary
 
 Input transcript:
