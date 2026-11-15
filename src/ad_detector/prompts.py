@@ -32,6 +32,7 @@ from utils.constants import (
     is_non_brand_name,
     is_sponsor_reasoning_rationale,
     mentions_advertising,
+    NOT_AD_CLASSIFICATIONS,
     squash_brand,
 )
 from config import (
@@ -517,11 +518,18 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
                         f"{start:.1f}s-{end:.1f}s (is_ad={is_ad_val})")
             return None
 
+    # Filter by classification/type field
+    classification = str(ad.get('classification') or ad.get('type') or '').lower()
+    if classification in NOT_AD_CLASSIFICATIONS:
+        logger.info(f"[{slug}:{episode_id}] Skipping non-ad: "
+                    f"{start:.1f}s-{end:.1f}s (classification={classification})")
+        return None
+
     # Filter by category
     raw_category = _get_category(ad)
     resolved_category = _repair_category(raw_category)
-    if not resolved_category:
-        # not a recognized ad (probably main_content) so ignore it.
+    if raw_category and not resolved_category:
+        # not a recognized category (probably main_content) so ignore it.
         logger.info(f"[{slug}:{episode_id}] Skipping non-ad: "
                     f"{start:.1f}s-{end:.1f}s (category={raw_category})")
         return None
@@ -641,7 +649,6 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
     ad_entry = {
         'start': start,
         'end': end,
-        'category': resolved_category,
         'confidence': norm_conf,
         'reason': reason,
         'start_text': _as_text(ad.get('start_text')),
@@ -651,6 +658,10 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
     # (reuses sponsor_name captured above; ad is unmutated between)
     if sponsor_name and sponsor_name != 'Advertisement detected':
         ad_entry['sponsor'] = sponsor_name
+    # Pass the LLM's raw category through unvalidated; the
+    # merge seam normalizes it against SEGMENT_CATEGORIES.
+    if resolved_category:
+        ad_entry['category'] = resolved_category
     # Only the literal true counts; the detector decides whether the feed keeps it.
     if ad.get('short_ask') is True:
         ad_entry['short_ask'] = True
@@ -1018,6 +1029,15 @@ _CATEGORY_KEY_HINTS = ('categor', 'segment_type', 'classification', 'type')
 _repair_category = repair_segment_category
 
 
+def resolve_ad_category(ad: dict):
+    """The segment category an ad object carries, wherever it put it.
+
+    "category" first, then other keys a model uses for the same idea. The value
+    is validated against the vocabulary either way, so a `type` of "ad" or
+    "advertisement" contributes nothing while "self_promo" is taken at face value.
+    """
+    return _repair_category(_get_category(ad))
+
 def _get_category(ad: dict):
     """The segment category an ad object carries, wherever it put it.
 
@@ -1032,9 +1052,9 @@ def _get_category(ad: dict):
         kl = str(key).lower()
         if kl == 'category' or not any(h in kl for h in _CATEGORY_KEY_HINTS):
             continue
-        found = ad.get(value)
-        if found:
-            return found
+        # only use if it hints at a valid category
+        if _repair_category(value):
+            return value
     return None
 
 
