@@ -10,7 +10,7 @@ from ad_detector import AdDetector
 from tests.unit.reviewer_test_utils import _build_reviewer, _mock_episode_meta
 
 NOTES = 'One ad zone mid-episode: jingle, host reads, then a house ad.'
-BLOCK_HEAD = 'Operator notes for this show (written by the person running this server;'
+BLOCK_HEAD = 'Podcast User Notes:'
 SEGMENTS = [{'start': 0.0, 'end': 500.0, 'text': 'first half of the episode'}]
 
 
@@ -35,8 +35,7 @@ def _detect_section(**kwargs):
 def test_detector_block_after_podcast_description_before_episode():
     section = _detect_section(podcast_description='A show.', detection_notes=NOTES)
     expected = (
-        BLOCK_HEAD + ' they describe how this show structures its ads and override '
-        'the general guidance above when they apply):\n' + NOTES + '\n\n')
+        BLOCK_HEAD + '\n' + NOTES + '\n\n')
     assert expected in section
     assert (section.index('Podcast Description:') < section.index(BLOCK_HEAD)
             < section.index('Episode Description'))
@@ -65,7 +64,7 @@ def _reviewer_prompt(**meta):
 def test_reviewer_prompt_has_notes_block_after_description():
     prompt = _reviewer_prompt(podcast_description='A show.', detection_notes=NOTES)
     assert BLOCK_HEAD in prompt
-    assert prompt.index('Podcast description:') < prompt.index(BLOCK_HEAD)
+    assert prompt.index('Podcast Description:') < prompt.index(BLOCK_HEAD)
     assert NOTES in prompt
 
 

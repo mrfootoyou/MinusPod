@@ -126,11 +126,30 @@ REVIEWER_HOLD_REASONS = frozenset({
 })
 ALL_HOLD_REASONS = frozenset(v for k, v in globals().items() if k.startswith('HOLD_REASON_'))
 
+MAIN_CONTENT_CATEGORY = 'main_content'
+CONTENT_CATEGORIES = (
+    # Segments always classified as content (never cut)
+    MAIN_CONTENT_CATEGORY, 'transition', 'teaser'
+)
+CONTENT_LIKE_CATEGORIES = (
+    # Segments sometimes classified as content (sometimes cut, depending on config)
+    'intro', 'outro', 'recap'
+)
+AD_CATEGORIES = (
+    # Segments always classified as promotions (always cut)
+    'sponsor', 'cross_promo', 'self_promo', 'interaction',
+)
+
 # Segment categories (issue #565): what kind of content a marker spans. A
 # marker may carry none: unset means no stage classified it, and only action
 # resolution defaults (see normalize_segment_category).
-SEGMENT_CATEGORIES = ('sponsor', 'cross_promo', 'self_promo', 'interaction',
-                      'intro', 'outro', 'recap')
+# Includes promotional and content-like categories (intro, outro, recap)
+SEGMENT_CATEGORIES = AD_CATEGORIES + CONTENT_LIKE_CATEGORIES
+# Explicitly ignored categories, i.e., content that is never treated as an ad.
+IGNORED_CATEGORIES = CONTENT_CATEGORIES
+# All recognized segment categories, including ignored ones.
+ALL_CATEGORIES = SEGMENT_CATEGORIES + IGNORED_CATEGORIES
+
 SEGMENT_ACTIONS = ('remove', 'beep', 'keep', 'mark')
 DEFAULT_SEGMENT_ACTION = 'remove'
 
@@ -184,9 +203,6 @@ def normalize_segment_category(value: Any) -> str:
     unset so 'sponsor' keeps meaning a real sponsor read.
     """
     return value if value in SEGMENT_CATEGORIES else 'sponsor'
-
-
-AD_CATEGORIES = ('sponsor', 'cross_promo', 'self_promo', 'interaction')
 
 
 def _has_fingerprint_evidence(marker: dict) -> bool:

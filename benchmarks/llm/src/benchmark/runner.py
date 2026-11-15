@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config import AD_CATEGORIES
 from utils.time import utc_now_iso
 from utils.prompt import scrub_description
 
@@ -308,10 +309,10 @@ async def run(
                 else:
                     parsed_ads, extraction_method = _parse_response(response_text)
 
-                # drop intro, outro, and recap segments. Our revised prompt asks for
-                # them but the benchmark doesn't know that and will count them as
-                # false positives.
-                parsed_ads = [ad for ad in parsed_ads if ad.get('category') not in ('intro', 'outro', 'recap')]
+                # drop non-promotional segments. Our revised prompt asks for
+                # all non-main_content segments, but the benchmark doesn't know
+                # that and will count them as false positives.
+                parsed_ads = [ad for ad in parsed_ads if ad.get('category') in AD_CATEGORIES]
 
                 comp = compliance_score(extraction_method)
                 cost_lookup = pricing_snapshot.lookup(unit.model_id)

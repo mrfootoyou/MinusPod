@@ -10,6 +10,7 @@ import re
 from collections import Counter
 from typing import NamedTuple
 
+from database import DEFAULT_VERIFICATION_PROMPT, VERIFICATION_PROMPT_EXAMPLES
 from sponsor_context import (SPONSOR_MIN_MENTIONS, framed_sponsor_names, registry_sponsor,
                              text_has_commercial_context)
 from sponsor_service import SponsorService
@@ -36,7 +37,7 @@ from utils.constants import (
     squash_brand,
 )
 from config import (
-    LOW_CONFIDENCE, CONFIDENCE_STRING_MAP,
+    ALL_CATEGORIES, IGNORED_CATEGORIES, LOW_CONFIDENCE, CONFIDENCE_STRING_MAP,
     CONTENT_DURATION_THRESHOLD, LOW_EVIDENCE_WARN_THRESHOLD,
     get_stage_tunable, SEGMENT_CATEGORIES, repair_segment_category,
 )
@@ -298,6 +299,23 @@ def get_static_system_prompt() -> str:
     )
 
 
+def get_static_verification_prompt() -> str:
+    """Return DEFAULT_VERIFICATION_PROMPT with the static SEED_SPONSORS list substituted.
+
+    Reproducible from source: no DB, env, or wallclock dependency. Used by the
+    offline LLM benchmark; production reads stored prompts and merges DB-derived
+    sponsors via ``AdDetector.get_system_prompt`` instead.
+    """
+    sponsor_list = ', '.join(s['name'] for s in SEED_SPONSORS)
+    return render_prompt(
+        strip_comments_from_prompt(DEFAULT_VERIFICATION_PROMPT),
+        sponsor_database=format_sponsor_block(sponsor_list),
+        sponsor_watchlists=strip_comments_from_prompt(DETECTION_PROMPT_SPONSOR_WATCHLISTS),
+        output_format=strip_comments_from_prompt(DETECTION_PROMPT_OUTPUT_FORMAT),
+        examples=strip_comments_from_prompt(VERIFICATION_PROMPT_EXAMPLES),
+    )
+
+
 def _flatten_ad_envelopes(ads: list) -> list:
     """Flatten ad-break envelopes the model intermittently emits.
 
@@ -525,12 +543,10 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
                     f"{start:.1f}s-{end:.1f}s (classification={classification})")
         return None
 
-    # Filter by category
+    # Filter out explicitly ignored categories
     raw_category = _get_category(ad)
-    resolved_category = _repair_category(raw_category)
-    if raw_category and not resolved_category:
-        # not a recognized category (probably main_content) so ignore it.
-        logger.info(f"[{slug}:{episode_id}] Skipping non-ad: "
+    if raw_category and raw_category.lower() in IGNORED_CATEGORIES:
+        logger.info(f"[{slug}:{episode_id}] Ignoring segment: "
                     f"{start:.1f}s-{end:.1f}s (category={raw_category})")
         return None
 
@@ -660,6 +676,7 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
         ad_entry['sponsor'] = sponsor_name
     # Pass the LLM's raw category through unvalidated; the
     # merge seam normalizes it against SEGMENT_CATEGORIES.
+    resolved_category = _repair_category(raw_category)
     if resolved_category:
         ad_entry['category'] = resolved_category
     # Only the literal true counts; the detector decides whether the feed keeps it.
@@ -761,7 +778,7 @@ def _int_field(obj: dict, keys: tuple[str, ...]):
     for key in keys:
         if key in obj:
             try:
-                return int(obj[key])
+                return int(float(obj[key]))
             except (TypeError, ValueError):
                 return None
     return None
@@ -945,7 +962,7 @@ AD_DETECTION_JSON_SCHEMA = {
                     "end_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
                     "category": {
                         "type": "string",
-                        "enum": list(SEGMENT_CATEGORIES) + ["main_content", "teaser", "transition"]
+                        "enum": list(ALL_CATEGORIES)
                     },
                     "reason": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
                     "sponsor_name": {"type": ["string", "null"], "maxLength": SPONSOR_MAX_NAME_CHARS},
@@ -1029,7 +1046,7 @@ _CATEGORY_KEY_HINTS = ('categor', 'segment_type', 'classification', 'type')
 _repair_category = repair_segment_category
 
 
-def resolve_ad_category(ad: dict):
+def resolve_ad_category(ad: dict) -> str|None:
     """The segment category an ad object carries, wherever it put it.
 
     "category" first, then other keys a model uses for the same idea. The value
@@ -1038,7 +1055,7 @@ def resolve_ad_category(ad: dict):
     """
     return _repair_category(_get_category(ad))
 
-def _get_category(ad: dict):
+def _get_category(ad: dict) -> str|None:
     """The segment category an ad object carries, wherever it put it.
 
     "category" first, then the other keys a model uses for the same idea.
@@ -1046,14 +1063,15 @@ def _get_category(ad: dict):
     if not isinstance(ad, dict):
         return None
     category = ad.get('category')
-    if category:
-        return category
+    if category is not None:
+        return str(category)
     for key, value in ad.items():
         kl = str(key).lower()
         if kl == 'category' or not any(h in kl for h in _CATEGORY_KEY_HINTS):
             continue
         # only use if it hints at a valid category
-        if _repair_category(value):
+        value = str(value) if value is not None else None
+        if value and _repair_category(value):
             return value
     return None
 

@@ -4,16 +4,23 @@ import json
 import logging
 from unittest.mock import patch, MagicMock
 
+from database import VERIFICATION_PROMPT_EXAMPLES
 from tests.app_bootstrap import bootstrap
 
 bootstrap('segment_prompt_test_')
 
 from ad_detector import AddressingStats, AdDetector, WindowResult
-from config import SEGMENT_CATEGORIES, DEFAULT_SEGMENT_ACTION, normalize_segment_category
-from utils.constants import DEFAULT_SYSTEM_PROMPT
+from config import (
+    SEGMENT_CATEGORIES, DEFAULT_SEGMENT_ACTION, normalize_segment_category,
+    ALL_CATEGORIES, MAIN_CONTENT_CATEGORY,
+)
+from utils.constants import (
+    DETECTION_PROMPT_EXAMPLES, DETECTION_PROMPT_OUTPUT_FORMAT,
+    DETECTION_PROMPT_SPONSOR_WATCHLISTS,
+)
 from ad_detector.prompts import (
-    parse_ads_from_response, parse_category_repair_response,
-    format_category_repair_prompt,
+    get_static_system_prompt, get_static_verification_prompt, parse_ads_from_response,
+    parse_category_repair_response, format_category_repair_prompt,
 )
 from llm_client import LLMClient, LLMResponse
 
@@ -58,8 +65,31 @@ def _detector(detect_show_segments=False, system_prompt=None):
 
 
 class TestDefaultPromptCategoryInstructions:
-    def test_category_field_required_in_output_format(self):
-        assert '"category"' in DEFAULT_SYSTEM_PROMPT
+    def test_prompt_contains_required_sections(self):
+        prompt = get_static_system_prompt()
+        assert DETECTION_PROMPT_OUTPUT_FORMAT in prompt
+        assert DETECTION_PROMPT_EXAMPLES in prompt
+        assert DETECTION_PROMPT_SPONSOR_WATCHLISTS in prompt
+
+    def test_verification_prompt_contains_required_sections(self):
+        prompt = get_static_verification_prompt()
+        assert DETECTION_PROMPT_OUTPUT_FORMAT in prompt
+        assert VERIFICATION_PROMPT_EXAMPLES in prompt
+        assert DETECTION_PROMPT_SPONSOR_WATCHLISTS not in prompt
+
+    def test_all_segment_categories_in_output_format(self):
+        cat_def = [
+            line for line in DETECTION_PROMPT_OUTPUT_FORMAT.splitlines()
+            if '"category": "' in line
+        ]
+        assert len(cat_def) == 1
+        for cat in ALL_CATEGORIES:
+            if cat == MAIN_CONTENT_CATEGORY:
+                # 'main_content' is excluded from the prompt's list of allowed
+                # categories since we discourage the LLM from returning these segments
+                assert cat not in cat_def[0]
+            else:
+                assert cat in cat_def[0]
 
 
 def test_verification_wires_category_actions_into_repair_and_dedup():

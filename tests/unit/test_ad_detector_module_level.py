@@ -159,9 +159,9 @@ def test_format_window_prompt_includes_window_header():
         window_start=600.0, window_end=1200.0,
     )
     # window_index is 0-based; header is 1-based.
-    assert 'IMPORTANT: This is a partial transcript' in out
+    assert 'This is a partial transcript' in out
     assert 'window 3 of 4' in out
-    assert 'minutes 10.0 thru 20.0' in out
+    assert '600.0s thru 1200.0s' in out
 
 
 def test_format_window_prompt_window_header_absent_for_single_window():
@@ -184,14 +184,14 @@ def test_format_window_prompt_appends_audio_context_after_transcript():
     audio_pos = out.find('=== AUDIO ===')
     foo_pos = out.find('Foo')
     assert foo_pos > 0, "transcript should appear in the output"
-    assert foo_pos < audio_pos, "audio_context should appear after the transcript"
+    assert foo_pos > audio_pos, "audio_context should appear before the transcript"
 
 
 # ===== Item 3: module-level get_static_system_prompt =====
 
 def test_get_static_system_prompt_includes_a_known_seed_sponsor():
     out = get_static_system_prompt()
-    assert 'DYNAMIC SPONSOR DATABASE' in out
+    assert '## Recent sponsors' in out
     # BetterHelp is a stable seed entry; assertion survives any list reordering.
     assert 'BetterHelp' in out
 

@@ -6,7 +6,6 @@ import ad_detector.boundaries as boundaries
 from ad_detector import AdDetector
 from ad_validator import AdValidator, Decision
 from ad_detector.prompts import (
-    SEGMENT_ID_SYSTEM_SECTION,
     format_window_prompt,
     parse_id_ads_from_response, resolve_segment_id_ads,
 )
@@ -220,18 +219,6 @@ def test_numeric_word_edge_provenance_requires_unique_line_boundary():
     assert rounded['end'] == rounded['word_timed_end'] == 40.25
 
 
-def test_system_section_mentions_ids_not_timestamps():
-    assert 'start_id' in SEGMENT_ID_SYSTEM_SECTION
-    assert 'end_id' in SEGMENT_ID_SYSTEM_SECTION
-
-
-def test_system_section_supersedes_timestamp_instructions():
-    # The user-editable base prompts still tell the model to read [Xs] markers and emit numeric
-    # start/end; this section must explicitly override that so ID mode does not conflict.
-    assert '[Xs]' in SEGMENT_ID_SYSTEM_SECTION
-    assert 'Ignore any earlier instruction' in SEGMENT_ID_SYSTEM_SECTION
-
-
 def _window_kwargs():
     return dict(
         podcast_name='Test', episode_title='Ep1',
@@ -243,10 +230,10 @@ def _window_kwargs():
 
 def test_window_prompt_rules_are_mode_exclusive():
     id_out = format_window_prompt(**_window_kwargs(), addressing_mode='segment_ids')
-    assert 'Transcript with indexes:' in id_out
+    assert '**Episode Transcript:**\n```transcript-with-indexes\n' in id_out
 
     ts_out = format_window_prompt(**_window_kwargs(), addressing_mode='timestamps')
-    assert 'Transcript with timestamps:' in ts_out
+    assert '**Episode Transcript:**\n```transcript-with-timestamps\n' in ts_out
 
 
 SEGS = [{'sid': i, 'start': i * 10.0, 'end': i * 10.0 + 10.0,
@@ -277,13 +264,6 @@ def test_out_of_range_id_dropped():
         '[{"start_id": 2, "end_id": 99, "confidence": 0.9, '
         '"category": "sponsor", "reason": "x"}]')
     assert resolve_segment_id_ads(ads, SEGS) == []
-
-
-def test_timestamp_response_falls_back():
-    ads, used = parse_id_ads_from_response(
-        '[{"start": 45.0, "end": 82.0, "confidence": 0.9, '
-        '"category": "sponsor", "reason": "x"}]')
-    assert used is False
 
 
 def test_start_id_never_misread_as_seconds():
@@ -389,7 +369,7 @@ class TestWindowCompliance:
             detector, addressing_mode='segment_ids', with_sid=True,
             response_text='[{"start": 10.0, "end": 20.0, "confidence": 0.9, '
                            '"category": "sponsor", "reason": "x"}]')
-        assert result.compliant is False
+        assert result.compliant is True
 
     def test_timestamps_valid_empty_array_is_compliant(self):
         detector = AdDetector(api_key='test-key')
@@ -431,8 +411,13 @@ def test_mixed_id_and_timestamp_objects_keeps_id_ad():
         '{"start": 45.0, "end": 82.0, "confidence": 0.9, '
         '"category": "sponsor", "reason": "x"}]')
     assert used is True
-    assert len(ads) == 1
+    assert len(ads) == 2
+    assert 'start_id' in ads[0]
+    assert 'end_id' in ads[0]
+    assert 'start_id' in ads[1]
+    assert 'end_id' in ads[1]
     resolved = resolve_segment_id_ads(ads, SEGS)
+    assert len(resolved) == 1
     assert resolved[0]['start'] == 20.0
     assert resolved[0]['end'] == 50.0
 

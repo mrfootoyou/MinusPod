@@ -141,7 +141,7 @@ SEED_SNAPSHOT = {
     'queue_fresh_boost': '5',
     'queue_bulk_boost': '0',
     'segment_category_actions': '{}',
-    'system_prompt': ('sha256', '20ed55333d9e12d653308a379cb8c69a354fe04fd4e62c90abf749fec7d9031e'),  # Updated for cross_promo semantics change
+    'system_prompt': ('sha256', '90763ca986250aa3502ddf2ea2959827f458aec50f62e5e049de9ca2dbe1167f'),  # Updated for cross_promo semantics change
     'transcribe_chunk_overlap_seconds': '30',
     'transcribe_concurrent_chunks': '4',
     'whisper_api_timeout_seconds': '600',
@@ -152,7 +152,7 @@ SEED_SNAPSHOT = {
     'transition_threshold_db': '3.5',
     'verification_miss_autocut_min_confidence': '0',
     'verification_miss_hold_min_confidence': '0.60',
-    'verification_prompt': ('sha256', 'fd2d0c90e63226bc5f43ad148611c06d1dec441e55569e98f5a531ac08e1ed4d'),
+    'verification_prompt': ('sha256', '1f12e757d19670336c18f3fb75cec1a91e7b0b6771f2878cc304247f195c2b7e'),
     'volume_threshold_db': '3.0',
     'vtt_transcripts_enabled': 'true',
     'whisper_language': 'en',
@@ -610,7 +610,7 @@ class TestShippedPromptsTrackTheDefault:
         from utils.constants import DEFAULT_SYSTEM_PROMPT
         values = dict(iter_refreshable_defaults())
         assert values['system_prompt'] == DEFAULT_SYSTEM_PROMPT
-        assert 'CATEGORY:' in values['system_prompt']
+        assert '## Categories' in values['system_prompt']
 
 
 def test_youtube_reset_keys_cover_every_default_but_the_switch():

@@ -75,7 +75,7 @@ def test_uncategorized_names_stay_in_leftovers():
          'category': 'sponsor', 'intro_text': 'y'}],
         sponsor_categories={'widgets': 'self_promo'},
     )._build_known_pattern_hint('example-podcast')
-    assert 'Previously identified sponsors for this podcast: Acme' in hint
+    assert 'Previously identified sponsors to watch out for: Acme' in hint
     assert '- Widgets (self_promo).' in hint
 
 

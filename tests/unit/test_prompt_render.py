@@ -243,7 +243,7 @@ def test_default_resurrect_prompt_has_sponsor_placeholder():
 def test_get_static_system_prompt_substitutes_seed_sponsors():
     out = get_static_system_prompt()
     assert '{sponsor_database}' not in out  # placeholder consumed
-    assert 'DYNAMIC SPONSOR DATABASE' in out  # block was inserted
+    assert '## Recent sponsors' in out  # block was inserted
     # Seed sponsors include a few well-known ones
     assert 'BetterHelp' in out or 'Athletic Greens' in out
 
@@ -267,7 +267,7 @@ def test_render_with_sponsors_non_empty_list_inserts_block():
     detector.db = MagicMock()
     detector.db.get_setting.return_value = 'true'
     out = detector._render_with_sponsors('Body{sponsor_database}END', 'seed_sponsors_detection')
-    assert 'DYNAMIC SPONSOR DATABASE' in out
+    assert '## Recent sponsors' in out
     assert 'AG1, Squarespace' in out
     assert 'Body' in out and 'END' in out
 

@@ -909,8 +909,8 @@ def test_current_detection_prompt_builds_into_native_transcript_and_cue_context(
     )
     segments, mode = adapter.parse_transcript(prompt)
     assert mode == "timestamps"
-    assert len(segments) == 8
-    assert segments[3]["text"] == "This episode is sponsored by BetterHelp."
+    assert len(segments) == 10
+    assert segments[3]["text"] == "Today we talk about hiking trips."
     assert "=== AUDIO SIGNALS ===" in prompt
 
 
