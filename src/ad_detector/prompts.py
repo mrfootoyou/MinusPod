@@ -960,10 +960,7 @@ AD_DETECTION_JSON_SCHEMA = {
                     "end": {"type": "number"},
                     "start_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
                     "end_text": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
-                    "category": {
-                        "type": "string",
-                        "enum": list(ALL_CATEGORIES)
-                    },
+                    "category": { "type": "string", "enum": list(ALL_CATEGORIES)},
                     "reason": {"type": ["string", "null"], "maxLength": AD_SCHEMA_TEXT_MAX_CHARS},
                     "sponsor_name": {"type": ["string", "null"], "maxLength": SPONSOR_MAX_NAME_CHARS},
                     "confidence": {"type": "number"},

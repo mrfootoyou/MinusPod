@@ -288,7 +288,7 @@ def test_category_only_review_is_validated_and_suggested(temp_db):
     result, calls = _review(p, _reply(category='cross_promo'))
     assert result['action'] == 'keep'
     assert result['category'] == 'cross_promo'
-    assert 'Category on record: sponsor' in calls[0]['prompt']
+    assert '**Category on record**: sponsor' in calls[0]['prompt']
     suggestions = pattern_cleanup._suggestions_for(p, [], result)
     assert [(item['kind'], item['payload']) for item in suggestions] == [
         ('category', {'category': 'cross_promo'}),

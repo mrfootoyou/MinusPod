@@ -1148,7 +1148,6 @@ DEFAULT_SYSTEM_PROMPT = """
 You are a JSON API for segmenting podcast transcripts.
 
 ## Task
-
 Identify all non-main content segments in a podcast transcript and output a compact JSON object.
 
 Input transcript use one of two cue formats:
@@ -1158,7 +1157,6 @@ Input transcript use one of two cue formats:
 Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to help resolve transcription errors and boundary hints; always verify against the transcript itself.
 
 ## Procedure
-
 1. **Ingest cues & metadata**: Read sequential cues (timestamped or indexed).
 2. **Detect boundaries**: Identify functional/topic shifts (may occur mid-cue).
 3. **Classify**: Assign segments to categories; default ambiguous spans to `main_content`.
@@ -1168,7 +1166,6 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 7. **Output**: Return a valid JSON object matching the schema.
 
 ## Categories
-
 - `main_content`: Substantive episode material (stories, reporting, interviews, discussions, Q&A, cold opens, current-episode summaries, guest introductions and bios). Never returned in output.
 - `intro`: Non-substantive opening material (theme music, show ID, boilerplate host intro, opening previews). May follow a cold open. Ends when substantive discussion or guest introduction begins.
 - `outro`: Explicit episode wrap-up following substantive discussion (sign-off, credits, closing theme, network tagline). Post-credit discussions remain `main_content`.
@@ -1183,7 +1180,6 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 **Default to retention (`main_content`)**: When in doubt, classify spans as `main_content`. Mark non-main content only if listeners can safely discard it without losing context, essential information, or conversational flow. Passing brand mentions, neutral commentary, and guest plugs remain `main_content`.
 
 ## Boundary & Clipping Rules
-
 - **Conservative clipping**: Bound non-main segments narrowly. When edges are blurry, err toward keeping audio in `main_content`.
 - **Cue spans (`start`/`end`)**: Must cover the full cue span containing the segment. Use the first cue's start time/index and the last cue's end time/index. Do not interpolate.
 - **Mid-cue overlap**: If a cue contains boundaries between multiple segments, include that cue in the span of every segment it overlaps.
@@ -1202,7 +1198,6 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 
 DETECTION_PROMPT_SPONSOR_WATCHLISTS = """
 ## Sponsor Watchlists
-
 Use these lists to help identify potential sponsors and resolve spelling errors.
 
 ### Common Sponsors (non-exhaustive)
@@ -1214,36 +1209,31 @@ Nordstrom, Macy's, Target, Walmart, Kohl's, Bloomingdale's, JCPenney, TJ Maxx, H
 
 DETECTION_PROMPT_OUTPUT_FORMAT = """
 ## Output Format
-
-Return only a valid, compact JSON object with no Markdown wrappers or commentary:
+Return ONLY a valid, compact JSON object with no Markdown wrappers or commentary:
 
 {
   "segments": [
     {
-      "start": number,
-      "end": number,
-      "start_text": string or null,
-      "end_text": string or null,
+      "start": 123.4, // float or integer. See Field Notes below.
+      "end": 156.7, // float or integer. See Field Notes.
+      "start_text": "string or null", // See Field Notes.
+      "end_text": "string or null", // See Field Notes.
       "category": "intro | outro | interaction | teaser | recap | transition | sponsor | cross_promo | self_promo",
-      "reason": string,
-      "sponsor_name": string or null,
-      "confidence": number
+      "reason": "string", // Brief classification rationale.
+      "sponsor_name": "string or null", // Canonical brand/offering for promotional segments, null otherwise.
+      "confidence": 0.90 // Classification confidence, 0.0 to 1.0. See Field Notes.
     }
   ]
 }
 
 ### Field Notes
-
 - `start`, `end`: Full cue boundary timestamps or indices (no interpolation).
-- `start_text`, `end_text`: Exact boundary text (up to 6 words) iif the segment begins or ends mid-cue; `null` otherwise.
-- `reason`: Brief classification rationale.
-- `sponsor_name`: Canonical brand/offering for promotional segments; `null` otherwise.
+- `start_text`, `end_text`: Exact boundary text (up to 6 words) iif the segment begins or ends mid-cue, null otherwise.
 - `confidence`: Lowest-certainty component score (category, boundary, sponsor). Use `0.9+` only when alternatives are improbable, `0.7-0.8` when likely but ambiguous, and `≤0.6` when competing interpretations are plausible.
 """.strip()
 
 DETECTION_PROMPT_EXAMPLES = """
 ## Example: Mid-Cue Boundary
-
 Input transcript:
 ```
 [192.3-197.8] We'll get back to the interview in a moment. This episode is sponsored by Acme Coffee.

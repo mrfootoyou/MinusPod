@@ -49,7 +49,7 @@ SEED_SNAPSHOT = {
     'audio_bitrate': '128k',
     'audio_encoder_compression_level': 'default',
     'chapter_prompt': ('sha256', 'ba78ae10ed245f1b215407d2980358cdf6aff6b5f64dfc1662c6f6848cb418b4'),
-    'pattern_cleanup_prompt': ('sha256', '9afdc1f10e265d421a8d39f04ff0a13e00275ac436aa51517c2b3a7d2213f145'),
+    'pattern_cleanup_prompt': ('sha256', '7f134a614aac65c377ce4c8f72884291f8e6412f23aff37fb8889bde1760b1cc'),
     'audio_normalize_enabled': 'false',
     'audio_replacement_sound_enabled': 'true',
     'audio_mp3_stream_copy_enabled': 'false',
@@ -141,7 +141,7 @@ SEED_SNAPSHOT = {
     'queue_fresh_boost': '5',
     'queue_bulk_boost': '0',
     'segment_category_actions': '{}',
-    'system_prompt': ('sha256', '90763ca986250aa3502ddf2ea2959827f458aec50f62e5e049de9ca2dbe1167f'),  # Updated for cross_promo semantics change
+    'system_prompt': ('sha256', '78e2056f653435730e3071498db413d1704fe01d13b2a70de6435ec778bd0bb3'),  # Updated for cross_promo semantics change
     'transcribe_chunk_overlap_seconds': '30',
     'transcribe_concurrent_chunks': '4',
     'whisper_api_timeout_seconds': '600',
@@ -152,7 +152,7 @@ SEED_SNAPSHOT = {
     'transition_threshold_db': '3.5',
     'verification_miss_autocut_min_confidence': '0',
     'verification_miss_hold_min_confidence': '0.60',
-    'verification_prompt': ('sha256', '1f12e757d19670336c18f3fb75cec1a91e7b0b6771f2878cc304247f195c2b7e'),
+    'verification_prompt': ('sha256', '0e8ede1233436a77f77dd07335015df573bf7c764a88d3e4c9e520ec9d8736dc'),
     'volume_threshold_db': '3.0',
     'vtt_transcripts_enabled': 'true',
     'whisper_language': 'en',

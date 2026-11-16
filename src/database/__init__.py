@@ -182,7 +182,6 @@ DEFAULT_VERIFICATION_PROMPT = """
 You are a JSON API for segmenting podcast transcripts.
 
 ## Task
-
 Identify all non-main content segments in a podcast transcript and output a compact JSON object.
 
 Note: This is the **second pass** over the transcript. Ads and other unwanted segments have already been cut, although some segments may have been missed, in-whole or in-part. If the first pass was accurate and complete, this pass should identify no additional segments.
@@ -194,7 +193,6 @@ Input transcript use one of two cue formats:
 Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to help resolve transcription errors and boundary hints; always verify against the transcript itself.
 
 ## Procedure
-
 1. **Ingest cues & metadata**: Read sequential cues (timestamped or indexed).
 2. **Detect boundaries**: Identify functional/topic shifts (may occur mid-cue).
 3. **Classify**: Assign segments to categories; default ambiguous spans to `main_content`.
@@ -204,7 +202,6 @@ Metadata (show ID, host, guest, date, sponsors, chapters) may be provided to hel
 7. **Output**: Return a valid JSON object matching the schema.
 
 ## Orphaned fragments
-
 Be especially vigilant for "orphaned fragments" or the remnants of partially cut segments. These are often short utterances that appear disconnected from the surrounding context, including out-of-place URLs, promo codes, calls to action, sponsor mentions, and ad bumpers.
 
 Orphaned fragments are, by definition, part of a larger (cut) segment and are therefore exempt from the minimum duration consolidation rule.
@@ -212,7 +209,6 @@ Orphaned fragments are, by definition, part of a larger (cut) segment and are th
 Orphaned fragments may be especially difficult to classify accurately -- you might recognize a sponsor fragment but not know the sponsor name. Do your best and know that correctly identified orphaned fragments will be merged with their parent segment, making classification less critical.
 
 ## Categories
-
 - `main_content`: Substantive episode material (stories, reporting, interviews, discussions, Q&A, cold opens, current-episode summaries, guest introductions and bios). Never returned in output.
 - `intro`: Non-substantive opening material (theme music, show ID, boilerplate host intro, opening previews). May follow a cold open. Ends when substantive discussion or guest introduction begins.
 - `outro`: Explicit episode wrap-up following substantive discussion (sign-off, credits, closing theme, network tagline). Post-credit discussions remain `main_content`.
@@ -227,7 +223,6 @@ Orphaned fragments may be especially difficult to classify accurately -- you mig
 **Default to retention (`main_content`)**: When in doubt, classify spans as `main_content`. Mark non-main content only if listeners can safely discard it without losing context, essential information, or conversational flow. Passing brand mentions, neutral commentary, and guest plugs remain `main_content`.
 
 ## Boundary & Clipping Rules
-
 - **Conservative clipping**: Bound non-main segments narrowly. When edges are blurry, err toward keeping audio in `main_content`.
 - **Cue spans (`start`/`end`)**: Must cover the full cue span containing the segment. Use the first cue's start time/index and the last cue's end time/index. Do not interpolate.
 - **Mid-cue overlap**: If a cue contains boundaries between multiple segments, include that cue in the span of every segment it overlaps.
@@ -246,7 +241,6 @@ Orphaned fragments may be especially difficult to classify accurately -- you mig
 
 VERIFICATION_PROMPT_EXAMPLES = """
 ## Example: Mid-Cue Boundary
-
 Input transcript:
 ```
 [192.3-194.8] We'll get back to the interview in a moment.
@@ -439,24 +433,63 @@ Transcript:
 
 # Pattern cleanup system prompt (Experiments > Pattern cleanup). The user
 # message carries pattern text, sponsor, category, and optional transcript context.
-DEFAULT_PATTERN_CLEANUP_PROMPT = """You review one learned podcast segment pattern. Its text may include unrelated words before or after the intended segment.
+DEFAULT_PATTERN_CLEANUP_PROMPT = """
+You are an expert audio editor auditing podcast segments.
 
-Classify the intended segment first, then check its content.
-- Preserve content that belongs to an intro, outro, recap, self-promotion, or listener interaction. Those categories are not contamination by themselves.
-- For non-sponsor segments, use action "keep" with a category correction when needed. Do not invent a sponsor or force the segment into sponsor-copy trimming rules.
-- For sponsor reads, retain only the exact sponsor copy. Drop host banter, unrelated show content, and transitions into or out of the break.
-- If two or more sponsors are read back to back, return each read as a separate piece.
-- Name the sponsor as it is spoken in the read. For a trim, also return sponsor when the recorded sponsor is wrong and the corrected name appears in the kept text.
-- Return category when the recorded category is wrong. Use only sponsor, cross_promo, self_promo, interaction, intro, outro, or recap.
-- Do not invent, reword, or reorder words. Every text you return must be copied from the pattern text.
-- If the pattern is already clean, return action "keep".
-- Set contaminated to true when the pattern holds unrelated main-show discussion that a trim cannot fix, and say why in contamination_reason.
+## Context
+You will receive a segment's recorded category, sponsor, target text pattern, and surrounding transcript context.
 
-Transcript context, when given, shows the audio around the pattern with the pattern marked between [[ and ]]. Use it only to judge where the intended segment starts and ends; never copy words from outside the pattern text.
+## Rules
+Determine the best ACTION (`keep`, `trim`, `split`, or `rename`) by reviewing the segment's category, sponsor, and boundaries.
 
-Return one JSON object:
-{"action": "keep" | "trim" | "split" | "rename", "text": string or null (trim only), "sponsor": string or null (rename, or optional with trim), "category": string or null (optional category correction), "pieces": [{"text": string, "sponsor": string, "category": string or null}] (split only; category optional per piece), "contaminated": boolean, "contamination_reason": string or null, "confidence": number from 0 to 1, "reasons": [short strings]}"""
+- **Strict Extraction:** All returned text MUST be an exact substring copied directly from the target pattern. Never alter text or extract words from the surrounding context.
+- **Contamination:** Mark `contaminated: true` if unrelated content is so intertwined that a simple trim or split cannot fix it. You may still use `keep` or `rename` on contaminated segments.
 
+## Categories
+- **main_content**: Substantive episode material (stories, reporting, interviews, discussions, Q&A, cold opens, current-episode summaries, guest introductions and bios).
+- **intro**: Non-substantive opening material (theme music, show ID, boilerplate host intro, opening previews). May follow a cold open. Ends when substantive discussion or guest introduction begins.
+- **outro**: Explicit episode wrap-up following substantive discussion (sign-off, credits, closing theme, network tagline). Post-credit discussions remain `main_content`.
+- **interaction**: Direct calls for audience participation (reviews, comments, question submissions). Merely addressing listeners does not qualify.
+- **recap**: Summary of prior episodes ("previously on"). Current-episode summaries remain `main_content`.
+- **sponsor**: Sustained promotion for an outside commercial brand, product, service, or PSA.
+- **cross_promo**: Sustained promotion for a sibling show, channel, event, or network bundle.
+- **self_promo**: Sustained promotion for the current show, host, memberships, merchandise, or show channels.
+
+## Actions
+- **trim**: Removes extraneous leading/trailing content. (Note: You may simultaneously correct the sponsor/category in the JSON output).
+  - *Sponsored:* Retain the complete ad delivery, including thematic hooks, personal anecdotes, and problem-setups. ONLY trim completely off-topic banter and generic transition phrases (e.g., "We'll be right back") occurring before/after the hook.
+  - *Non-sponsored:* Be lenient. Only trim clearly unrelated text.
+- **split**: Divides two or more distinct non-main-content segments appearing back-to-back. Do NOT split out `main_content`; use `trim` to remove it instead.
+- **rename**: Updates an incorrect sponsor or category when text boundaries are perfectly fine.
+- **keep**: Use when no changes are needed.
+
+{output_format}
+
+{examples}
+""".strip()
+
+PATTERN_CLEANUP_PROMPT_OUTPUT_FORMAT = """
+## Output Format
+Return ONLY a valid, compact JSON object with no Markdown wrappers or commentary:
+
+{
+  "action": "keep | trim | split | rename",
+  "text": "string or null", // The exact trimmed text. Required for 'trim', null otherwise.
+  "sponsor": "string or null", // The corrected canonical brand/offering. Empty string or null if not sponsored.
+  "category": "string or null", // The corrected category, null otherwise.
+  "pieces": [ // Required if action is 'split', null otherwise.
+    {
+      "text": "string", // The exact substring of the split piece.
+      "category": "string",
+      "sponsor": "string or null"
+    }
+  ], 
+  "contaminated": false, // boolean: True if irreparably contaminated.
+  "contamination_reason": "string or null", // Reason for contamination, null otherwise.
+  "confidence": 0.90, // Confidence in the chosen action, 0.0 to 1.0.
+  "reason": "string" // Short string explaining the core reasoning for the chosen action.
+}
+""".strip()
 
 class Database(SchemaMixin, PodcastMixin, EpisodeMixin, SettingsMixin,
                PatternMixin, SponsorMixin, StatsMixin, MaintenanceMixin,
