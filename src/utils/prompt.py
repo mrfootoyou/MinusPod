@@ -170,9 +170,10 @@ def format_prompt_heading(heading: str, level: int, content: str = "", indent: i
     content = content.strip() if content else ""
     if content:
         content = content + "\n"
-    return indent_text(f"{'#' * min(level, 6)} {heading}\n\n{content}", indent)
+    return indent_text(f"{'#' * min(level, 6)} {heading}\n{content}", indent)
 
-def format_prompt_section(title: str, content: str = "", indent: int = 0) -> str:
+def format_prompt_section(title: str, content: str = "",
+                          one_line: bool = False, indent: int = 0) -> str:
     """Format a text section using bold title using markdown section style.
     Both title and text are trimmed.
     Returned string ends with a new line.
@@ -182,8 +183,8 @@ def format_prompt_section(title: str, content: str = "", indent: int = 0) -> str
         raise ValueError("Section title cannot be empty")
     content = content.strip() if content else ""
     if content:
-        content = content + "\n"
-    return indent_text(f"**{title}:**\n{content}", indent)
+        content = f" {content}" if one_line else f"\n{content}"
+    return indent_text(f"**{title}:**{content}\n", indent)
 
 def format_prompt_list(lines: list[str], bullet: str = '-',
                        skip_empty: bool = True, indent: int = 0) -> str:

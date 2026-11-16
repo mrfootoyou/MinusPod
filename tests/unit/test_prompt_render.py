@@ -52,17 +52,17 @@ class TestIndentText:
 
 class TestFormatPromptHeading:
     def test_basics(self):
-        assert format_prompt_heading("Test", 1) == "# Test\n\n"
-        assert format_prompt_heading("\n  Test \n", 1) == "# Test\n\n"
-        assert format_prompt_heading("Test", 2) == "## Test\n\n"
-        assert format_prompt_heading("Test", 6) == "###### Test\n\n"
-        assert format_prompt_heading("Test", 7) == "###### Test\n\n"
+        assert format_prompt_heading("Test", 1) == "# Test\n"
+        assert format_prompt_heading("\n  Test \n", 1) == "# Test\n"
+        assert format_prompt_heading("Test", 2) == "## Test\n"
+        assert format_prompt_heading("Test", 6) == "###### Test\n"
+        assert format_prompt_heading("Test", 7) == "###### Test\n"
 
     def test_clean_line(self):
-        assert format_prompt_heading("Te\t\tst", 1) == "# Te st\n\n"
+        assert format_prompt_heading("Te\t\tst", 1) == "# Te st\n"
 
     def test_with_indent(self):
-        assert format_prompt_heading("Test", 1, indent=2) == "  # Test\n\n"
+        assert format_prompt_heading("Test", 1, indent=2) == "  # Test\n"
 
     def test_empty_heading_raises(self):
         with pytest.raises(ValueError):
@@ -93,6 +93,10 @@ class TestFormatPromptSection:
             format_prompt_section("", "text")
         with pytest.raises(ValueError):
             format_prompt_section(" \t", "text")
+
+    def test_with_one_line(self):
+        assert format_prompt_section("Section", "text", one_line=True) == "**Section:** text\n"
+        assert format_prompt_section("Section", "text", one_line=True, indent=2) == "  **Section:** text\n"
 
 class TestFormatPromptList:
     def test_basics(self):
