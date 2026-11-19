@@ -234,18 +234,6 @@ def format_prompt_code_block(code: str, language: str = "text", fence_char: str 
     fence = fence_char * (max_fence_len + 1)
     return indent_text(f"{fence}{language}\n{code}\n{fence}\n", indent)
 
-def format_detection_notes_block(notes: str|None) -> str:
-    """Prompt block for per-feed operator notes, or "" when there are none.
-    Returned string ends with 2 new lines.
-    """
-    # Operator text is trusted, so strip consecutive newlines only.
-    notes = re.sub(r'(?:\s*\n)+', '\n', notes or '').strip()[:DETECTION_NOTES_MAX_CHARS]
-    if not notes:
-        return ""
-    return (
-        f"Podcast User Notes:\n{notes}\n\n"
-    )
-
 def strip_comments_from_prompt(prompt: str|None) -> str:
     """Remove HTML-style comments from the prompt, following markdown conventions.
 

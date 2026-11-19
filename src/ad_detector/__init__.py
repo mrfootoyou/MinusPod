@@ -53,8 +53,9 @@ from utils.markers import (
     subtract_spans,
 )
 from utils.prompt import (
-    format_sponsor_block, render_prompt, apply_override, seed_sponsors_enabled,
-    format_detection_notes_block, scrub_description, strip_comments_from_prompt,
+    format_prompt_list, format_prompt_section, format_sponsor_block, render_prompt,
+    apply_override, seed_sponsors_enabled,
+    scrub_description, strip_comments_from_prompt,
     finalize_prompt, format_prompt_code_block,
 )
 from utils.text import most_mentioned, truncate, word_boundary_re
@@ -1172,7 +1173,7 @@ class AdDetector:
             if is_defined_pattern(p) and len(tier1) < self._HINT_TIER1_CAP:
                 snippet = truncate(p.get('intro_text') or p.get('outro_text') or '', self._HINT_SNIPPET_CHARS)
                 category = sponsor_categories.get(key) or p.get('category') or 'sponsor'
-                line = f"- {sponsor} ({category})."
+                line = f"{sponsor} ({category})."
                 if snippet:
                     line += f' Opens like: "{snippet}"'
                 tier1.append(line)
@@ -1183,19 +1184,24 @@ class AdDetector:
         # A sponsor-level category still reaches the prompt when every pattern
         # naming it is auto-learned, which the tier above leaves nameless.
         categorized = [
-            f"- {name} ({sponsor_categories[key]})."
+            f"{name} ({sponsor_categories[key]})."
             for key, name in sorted(names.items())
             if key in sponsor_categories and key not in tier1_keys
         ]
         leftovers = sorted(name for key, name in names.items() if key not in sponsor_categories)
-        parts = []
+        prompt_hint = ""
         if tier1 or categorized:
-            parts.append("Previously identified segments to watch out for:")
-            parts.extend(tier1)
-            parts.extend(categorized)
+            prompt_hint += format_prompt_section(
+                "Previously identified segments to watch out for",
+                format_prompt_list(tier1 + categorized)
+            )
         if leftovers:
-            parts.append(f"Previously identified sponsors to watch out for: {', '.join(leftovers)}")
-        return "\n".join(parts) + "\n"
+            prompt_hint += format_prompt_section(
+                "Previously identified sponsors to watch out for",
+                ", ".join(leftovers),
+                one_line=True
+            )
+        return prompt_hint
 
     def _apply_sponsor_segment_categories(self, ads, slug, episode_id):
         """Stamp the operator's per-sponsor segment category onto ads naming that sponsor."""
@@ -2018,13 +2024,24 @@ class AdDetector:
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section += f"Podcast Description:\n{format_prompt_code_block(podcast_description)}\n"
+                description_section += format_prompt_section(
+                    "Podcast Description",
+                    format_prompt_code_block(podcast_description)
+                )
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed podcast description ({len(podcast_description)} chars)")
-            description_section += format_detection_notes_block(detection_notes)
+
+            if detection_notes:
+                description_section += format_prompt_section(
+                    "Podcast User Notes",
+                    format_prompt_code_block(detection_notes),
+                )
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (may list sponsors):\n{format_prompt_code_block(episode_description)}\n"
+                description_section += format_prompt_section(
+                    "Episode Description (may list sponsors)",
+                    format_prompt_code_block(episode_description)
+                )
                 logger.info(f"[{slug}:{episode_id}] Including scrubbed episode description ({len(episode_description)} chars)")
 
             # Add podcast-specific known-pattern hint from ad_patterns
@@ -2570,10 +2587,20 @@ class AdDetector:
                     model = self.get_model()
                     kc_desc = ""
                     if podcast_description:
-                        kc_desc += f"Podcast Description:\n{format_prompt_code_block(podcast_description)}\n"
-                    kc_desc += format_detection_notes_block(detection_notes)
+                        kc_desc += format_prompt_section(
+                            "Podcast Description",
+                            format_prompt_code_block(podcast_description),
+                        )
+                    if detection_notes:
+                        kc_desc += format_prompt_section(
+                            "Podcast User Notes",
+                            format_prompt_code_block(detection_notes),
+                        )
                     if episode_description:
-                        kc_desc += f"Episode Description:\n{format_prompt_code_block(episode_description)}\n"
+                        kc_desc += format_prompt_section(
+                            "Episode Description",
+                            format_prompt_code_block(episode_description),
+                        )
                     kc_live = live_route_params('detection')
                     inverted = self._detect_keep_content_ads(
                         segments, model=model, slug=slug, episode_id=episode_id,
@@ -3580,12 +3607,23 @@ class AdDetector:
             description_section = ""
             podcast_description = scrub_description(podcast_description, max_length=800)
             if podcast_description:
-                description_section += f"Podcast Description:\n{format_prompt_code_block(podcast_description)}\n"
-            description_section += format_detection_notes_block(detection_notes)
+                description_section += format_prompt_section(
+                    "Podcast Description",
+                    format_prompt_code_block(podcast_description)
+                )
+
+            if detection_notes:
+                description_section += format_prompt_section(
+                    "Podcast User Notes",
+                    format_prompt_code_block(detection_notes),
+                )
 
             episode_description = scrub_description(episode_description, max_length=4000)
             if episode_description:
-                description_section += f"Episode Description (may list sponsors):\n{format_prompt_code_block(episode_description)}\n"
+                description_section += format_prompt_section(
+                    "Episode Description (may list sponsors)",
+                    format_prompt_code_block(episode_description)
+                )
 
             sponsor_history = self._build_known_pattern_hint(slug)
             if sponsor_history:
