@@ -285,3 +285,28 @@ def test_json_object_is_blank_accepts_an_object_naming_no_answer(body):
                                   'not json at all', '', None])
 def test_json_object_is_blank_rejects_anything_that_answers(body):
     assert json_object_is_blank(body) is False
+
+
+# ---------- parse_jsonc ----------
+
+def test_parse_jsonc_removes_comments():
+    from utils.llm_response import parse_jsonc
+    assert parse_jsonc('"abc" // comment') == "abc"
+    assert parse_jsonc('/* comment */ "abc" /* comment */') == "abc"
+    json_with_comments = '''
+    {
+        // This is a comment
+        "key1": "value1", /* another comment */ // trailing comment
+        "key2": "value2", // EOL comment // continued
+        "key3": {"foo": null /* object embedded comment */}, // trailing comment
+        "key4": [/* array embedded comment */] // trailing comment
+    }
+    '''
+    parsed = parse_jsonc(json_with_comments)
+    assert parsed == {"key1": "value1", "key2": "value2", "key3": {"foo": None}, "key4": []}
+
+def test_parse_jsonc_removes_trailing_commas():
+    from utils.llm_response import parse_jsonc
+    assert parse_jsonc('{"key": "value",}') == {"key": "value"}
+    assert parse_jsonc('[123,]') == [123]
+    assert parse_jsonc('{"key": {"nested": ["value",],},}') == {"key": {"nested": ["value"]}}

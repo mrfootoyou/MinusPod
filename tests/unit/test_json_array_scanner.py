@@ -54,6 +54,12 @@ def test_empty_string_yields_nothing():
     assert list(_find_json_array_candidates('')) == []
 
 
+def test_skips_comments():
+    text = 'prefix // eol comment\n [1, /* embedded comment */ 2,] /* multi-line [3] */ [4]'
+    got = list(_find_json_array_candidates(text))
+    assert got == ['[1, /* embedded comment */ 2,]', '[4]']
+
+
 def test_adversarial_input_runs_linear():
     """Nested-alternation regex could regress to seconds on this; the
     bracket scanner must stay O(n)."""

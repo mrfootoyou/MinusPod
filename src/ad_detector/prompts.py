@@ -22,7 +22,7 @@ from utils.prompt import (
 )
 from utils.text import truncate
 from utils.time import parse_timestamp
-from utils.llm_response import extract_json_ads_array
+from utils.llm_response import extract_json_ads_array, parse_jsonc
 from utils.constants import (
     DEFAULT_SYSTEM_PROMPT, DETECTION_PROMPT_SPONSOR_WATCHLISTS,
     DETECTION_PROMPT_OUTPUT_FORMAT, DETECTION_PROMPT_EXAMPLES,
@@ -1129,7 +1129,7 @@ def parse_category_repair_response(response_text: str) -> dict[int, str]:
     callers treat that as nothing resolved and keep the sponsor default.
     """
     try:
-        data = json.loads(response_text)
+        data = parse_jsonc(response_text)
     except (TypeError, ValueError):
         return {}
     if isinstance(data, dict):

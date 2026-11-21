@@ -5,13 +5,21 @@ import re
 
 logger = logging.getLogger(__name__)
 
+def parse_jsonc(json_str: str):
+    """Wrapper around `json.loads()` which handles comments and trailing commas."""
+    # Match double-quoted strings OR comments (//... or /*...*/) OR trailing commas
+    pattern = r'("(?:\\.|[^"\\])*")|//[^\r\n]*|/\*[\s\S]*?\*/|,(?=\s*[}\]])'
+    # Preserve double-quoted strings, remove comments and trailing commas
+    cleaned = re.sub(pattern, lambda m: m.group(1) or "", json_str)
+    return json.loads(cleaned)
+
 
 def json_object_is_blank(response_text: str | None) -> bool:
     """True when the body is a JSON object that names no answer at all.
     ``{}`` and ``{"ads": null}`` qualify; ``{"ads": []}`` does not, since an explicit
     empty list is the model answering "nothing here"."""
     try:
-        parsed = json.loads((response_text or "").strip())
+        parsed = parse_jsonc((response_text or "").strip())
     except (json.JSONDecodeError, TypeError):
         return False
     if not isinstance(parsed, dict):
@@ -23,10 +31,11 @@ def find_json_array_candidates(text: str):
     """Yield each top-level ``[...]`` substring of ``text``, left to right.
 
     Single-pass scan tracking bracket depth and string context (brackets inside
-    ``"..."`` are ignored).
+    ``"..."`` and comments (``//...`` or ``/*...*/``) are ignored).
     """
     depth = 0
     start = -1
+    in_comment = ''
     in_string = False
     escape = False
     for i, ch in enumerate(text):
@@ -37,6 +46,15 @@ def find_json_array_candidates(text: str):
                 escape = True
             elif ch == '"':
                 in_string = False
+            continue
+        if in_comment:
+            if in_comment == '/' and ch == '\n':
+                in_comment = ''  # end of single-line comment
+            elif in_comment == '*' and ch == '/' and text[i-1] == '*':
+                in_comment = ''  # end of multi-line comment
+            continue
+        if (ch == '/' or ch == '*') and i > 0 and text[i-1] == '/':
+            in_comment = ch
             continue
         if ch == '"':
             in_string = True
@@ -108,7 +126,7 @@ def extract_json_ads_array(
     cleaned_text = _strip_preamble(response_text, slug, episode_id)
 
     try:
-        parsed = json.loads(cleaned_text)
+        parsed = parse_jsonc(cleaned_text)
         if isinstance(parsed, list):
             return parsed, "json_array_direct"
         if isinstance(parsed, dict):
@@ -143,7 +161,7 @@ def extract_json_ads_array(
     code_block_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', response_text)
     if code_block_match:
         try:
-            return json.loads(code_block_match.group(1)), "markdown_code_block"
+            return parse_jsonc(code_block_match.group(1)), "markdown_code_block"
         except json.JSONDecodeError:
             pass
 
@@ -151,7 +169,7 @@ def extract_json_ads_array(
     last_valid_ads = None
     for candidate in find_json_array_candidates(scan_text):
         try:
-            potential_ads = json.loads(candidate)
+            potential_ads = parse_jsonc(candidate)
         except json.JSONDecodeError:
             continue
         if isinstance(potential_ads, list):
@@ -168,7 +186,7 @@ def extract_json_ads_array(
     if start_idx >= 0 and end_idx > start_idx:
         json_str = clean_response[start_idx:end_idx]
         try:
-            return json.loads(json_str), "bracket_fallback"
+            return parse_jsonc(json_str), "bracket_fallback"
         except json.JSONDecodeError as e:
             logger.warning(
                 f"[{slug}:{episode_id}] Strategy 3 JSON parse failed: {e} "
@@ -261,7 +279,7 @@ def extract_json_object(
     cleaned_text = _strip_preamble(response_text, slug, episode_id)
 
     try:
-        parsed = json.loads(cleaned_text)
+        parsed = parse_jsonc(cleaned_text)
         if isinstance(parsed, dict):
             return parsed, "json_object_direct"
         if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
@@ -272,7 +290,7 @@ def extract_json_object(
     code_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response_text)
     if code_block_match:
         try:
-            obj = json.loads(code_block_match.group(1))
+            obj = parse_jsonc(code_block_match.group(1))
             if isinstance(obj, dict):
                 return obj, "markdown_code_block"
         except json.JSONDecodeError:
@@ -285,7 +303,7 @@ def extract_json_object(
     if start_idx >= 0 and end_idx > start_idx:
         json_str = clean_response[start_idx:end_idx]
         try:
-            obj = json.loads(json_str)
+            obj = parse_jsonc(json_str)
             if isinstance(obj, dict):
                 return obj, "brace_fallback"
         except json.JSONDecodeError as e:
