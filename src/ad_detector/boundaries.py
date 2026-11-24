@@ -721,8 +721,7 @@ def extend_ad_boundaries_by_content(ads: list[dict], segments: list[dict],
 
         # Get the ad's own text to extract sponsor names
         ad_text = _bounded_transcript_text(segments, ad_start, ad_end, memo).lower()
-        ad_sponsors = extract_sponsor_names(ad_text, ad.get('reason'),
-                                            exclude=own_site)
+        ad_sponsors = extract_sponsor_names(ad_text, ad, exclude=own_site)
         ad_domains = domain_labels(ad_text)
 
         # Check timed words after the ad for a supported CTA continuation.
@@ -872,15 +871,15 @@ def _text_has_ad_content(text: str, sponsor_names: set = None) -> bool:
     return False
 
 
-def extract_sponsor_names(text: str, ad_reason: str = None,
-                          exclude: set = None) -> set:
+def extract_sponsor_names(text: str, ad: dict | None = None,
+                          exclude: set | None = None) -> set:
     """Extract potential sponsor names from transcript text and ad reason.
 
     Thin alias for SponsorService.extract_sponsors_from_transcript (the canonical
     implementation), kept because call sites and tests import this name.
     """
     return SponsorService.extract_sponsors_from_transcript(
-        text, ad_reason, exclude=exclude)
+        text, ad=ad, exclude=exclude)
 
 
 # --- Timestamp validation (Fix 1: Claude hallucination correction) ---
@@ -1401,7 +1400,7 @@ def merge_same_sponsor_ads(ads: list[dict], segments: list[dict], max_gap: float
     ad_sponsors = []
     for ad in ads:
         ad_text = get_transcript_text_for_range(segments, ad['start'], ad['end'])
-        sponsors = extract_sponsor_names(ad_text, ad.get('reason'), exclude=own_site)
+        sponsors = extract_sponsor_names(ad_text, ad, exclude=own_site)
         ad_sponsors.append(sponsors)
         if sponsors:
             logger.debug(f"Ad {ad['start']:.1f}s-{ad['end']:.1f}s sponsors: {sponsors}")
@@ -1929,8 +1928,7 @@ def snap_terminal_ad_to_splice(ads: list[dict], segments: list[dict],
                             if e.get('depth_dbfs') is not None else 0.0)
             ad_text = get_transcript_text_for_range(
                 segments, ad_copy['start'], ad_copy['end']).lower()
-            ad_sponsors = extract_sponsor_names(
-                ad_text, ad_copy.get('reason'), exclude=own_site)
+            ad_sponsors = extract_sponsor_names(ad_text, ad_copy, exclude=own_site)
             for event in candidates:
                 if any(
                         blocker.get('start') is not None
@@ -2085,8 +2083,7 @@ def snap_extended_ad_tails_to_splice(ads: list[dict], segments: list[dict],
 
         ad_text = get_transcript_text_for_range(
             segments, ad_copy['start'], original_end).lower()
-        ad_sponsors = extract_sponsor_names(
-            ad_text, ad_copy.get('reason'), exclude=own_site)
+        ad_sponsors = extract_sponsor_names(ad_text, ad_copy, exclude=own_site)
         for event in candidates:
             if _span_blocked_by_content(
                     segments, coverage, ad_sponsors,

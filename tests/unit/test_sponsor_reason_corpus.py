@@ -141,7 +141,7 @@ def test_extraction_stays_fast_on_a_hostile_reason():
 def test_merge_tokens_come_from_the_same_labeler_as_the_marker(reason, expected):
     """Two phrase patterns used to answer this separately, so merging missed a
     brand the marker was already labeled with."""
-    assert SponsorService.extract_sponsors_from_transcript('', reason) == expected
+    assert SponsorService.extract_sponsors_from_transcript('', ad={'reason': reason}) == expected
 
 
 @pytest.mark.parametrize('reason', [
@@ -150,7 +150,7 @@ def test_merge_tokens_come_from_the_same_labeler_as_the_marker(reason, expected)
 ])
 def test_an_editorial_reason_contributes_no_merge_token(reason):
     """Otherwise two unrelated spans share a token and merge on it."""
-    assert SponsorService.extract_sponsors_from_transcript('', reason) == set()
+    assert SponsorService.extract_sponsors_from_transcript('', ad={'reason': reason}) == set()
 
 
 def test_boundary_keywords_agree_with_the_marker_label():

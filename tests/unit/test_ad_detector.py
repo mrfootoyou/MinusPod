@@ -118,7 +118,7 @@ class TestExtractSponsorNames:
         text = "Some general text here"
         ad_reason = "NordVPN sponsor read with promo code"
 
-        sponsors = extract_sponsor_names(text, ad_reason=ad_reason)
+        sponsors = extract_sponsor_names(text, {'reason': ad_reason})
 
         assert 'nordvpn' in sponsors
 
@@ -925,7 +925,7 @@ class TestSplitConflictingActionSpan:
             assert fragment['pattern_id'] == 12
             assert fragment['pattern_defined'] is False
             assert fragment['confidence'] == 0.91
-            assert extract_sponsor_names('', fragment['reason']) == set()
+            assert extract_sponsor_names('', fragment) == set()
             assert _extract_ad_keywords(fragment) == []
 
     def test_carved_losing_tail_drops_parent_ad_explanation(self):
@@ -944,7 +944,7 @@ class TestSplitConflictingActionSpan:
         assert 'Acme' not in entries[0]['reason']
         assert 'sponsor' not in entries[0]
         assert 'end_text' not in entries[0]
-        assert extract_sponsor_names('', entries[0]['reason']) == set()
+        assert extract_sponsor_names('', entries[0]) == set()
         assert _extract_ad_keywords(entries[0]) == []
 
     def test_current_same_start_as_last_consumes_last(self):

@@ -431,7 +431,7 @@ class SponsorService:
         return None
 
     @staticmethod
-    def extract_sponsor_from_reason(text: str) -> str | None:
+    def extract_sponsor_from_reason(text: str | None) -> str | None:
         """Extract a sponsor name from an LLM ad-reason string, else None.
 
         A brand is a capitalized run narrowed to the span a domain in the same text
@@ -491,14 +491,19 @@ class SponsorService:
         return {token for token in runs if len(token) >= 4}
 
     @staticmethod
-    def extract_sponsors_from_transcript(text: str, ad_reason: str = None,
-                                         exclude: set = None) -> set:
+    def extract_sponsors_from_transcript(text: str, ad: dict | None = None,
+                                         exclude: set | None = None) -> set:
         """Return lowercase brand tokens from domains, spoken "dot com" and the ad reason.
 
         ``exclude`` drops non-advertiser tokens (see own_site_tokens), so the host's
         own site is not read as ad content. merge_same_sponsor_ads uses this to
         test whether adjacent ads share a brand.
         """
+        # return nothing if the ad is *definitely not* an ad
+        from config import AD_CATEGORIES
+        if ad and ad.get('category') and ad['category'] not in AD_CATEGORIES:
+            return set() # Not an ad category, so no sponsors to extract
+        ad_reason = ad.get('reason') if ad else None
         sponsors = set()
         if not text:
             text = ''

@@ -289,7 +289,7 @@ def test_jev_detection_without_quotes_reaches_renderer(monkeypatch,
             validate_timestamps=True, addressing_mode=addressing_mode)
     assert len(detection.ads) == 1
     candidate = detection.ads[0]
-    assert not candidate['start_text']
+    assert candidate['start_text'] == 'A word from our sponsor Acme. Try the'
     assert (candidate['start'], candidate['end']) == (6.0, 87.8)
     assert (candidate['word_timed_start'], candidate['word_timed_end']) == (6.0, 87.8)
 

@@ -492,7 +492,7 @@ def test_long_window_with_a_cut_reason_is_kept_when_the_span_names_the_sponsor(c
         kept = _normalize_ad(ad, _SPAN_START, _SPAN_END, episode_sponsors=sponsors,
                              segments=_span_segments(_ACME_READ))
     assert kept is not None
-    assert '(sponsor found in span transcript)' in caplog.text
+    assert 'sponsor found in span transcript' in caplog.text
 
 
 def test_long_window_is_rejected_when_the_span_names_no_known_sponsor(caplog):

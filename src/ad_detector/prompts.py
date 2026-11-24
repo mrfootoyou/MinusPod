@@ -37,8 +37,8 @@ from utils.constants import (
     squash_brand,
 )
 from config import (
-    ALL_CATEGORIES, IGNORED_CATEGORIES, LOW_CONFIDENCE, CONFIDENCE_STRING_MAP,
-    CONTENT_DURATION_THRESHOLD, LOW_EVIDENCE_WARN_THRESHOLD,
+    ALL_CATEGORIES, CONTENT_LIKE_CATEGORIES, IGNORED_CATEGORIES, LOW_CONFIDENCE,
+    CONFIDENCE_STRING_MAP, CONTENT_DURATION_THRESHOLD, LOW_EVIDENCE_WARN_THRESHOLD,
     get_stage_tunable, repair_segment_category,
 )
 
@@ -421,7 +421,7 @@ def _text_is_duplicate(a: str, b: str) -> bool:
     return overlap / smaller > 0.8 if smaller > 0 else False
 
 
-def _extract_sponsor_name(ad: dict) -> str:
+def _extract_sponsor_name(ad: dict) -> tuple[str, str] | None:
     """Extract sponsor/advertiser name using priority fields, keywords, and dynamic scanning."""
     # Local alias for the SponsorService method - keeps call sites below short.
     extract_sponsor_from_text = SponsorService.extract_sponsor_from_reason
@@ -429,7 +429,7 @@ def _extract_sponsor_name(ad: dict) -> str:
     for field in SPONSOR_PRIORITY_FIELDS:
         value = _get_valid_sponsor_value(ad.get(field))
         if value:
-            return value
+            return value, field
 
     for key in ad.keys():
         key_lower = key.lower()
@@ -437,7 +437,7 @@ def _extract_sponsor_name(ad: dict) -> str:
             if keyword in key_lower:
                 value = _get_valid_sponsor_value(ad.get(key))
                 if value:
-                    return value
+                    return value, key
 
     priority_lower = {f.lower() for f in SPONSOR_PRIORITY_FIELDS}
     for key, val in ad.items():
@@ -449,12 +449,12 @@ def _extract_sponsor_name(ad: dict) -> str:
             framed = framed_sponsor_names(val) if isinstance(val, str) else []
             value = _get_valid_sponsor_value(framed[0]) if framed else None
             if value:
-                return value
+                return value, key
             continue
         if isinstance(val, str) and len(val) < 80:
             value = _get_valid_sponsor_value(val)
             if value:
-                return value
+                return value, key
 
     for key, val in ad.items():
         if key.lower() in STRUCTURAL_FIELDS:
@@ -462,9 +462,9 @@ def _extract_sponsor_name(ad: dict) -> str:
         if isinstance(val, str) and len(val) > 10:
             sponsor = extract_sponsor_from_text(AUDIO_ECHO_RE.sub(' ', val))
             if sponsor and not is_non_brand_name(sponsor):
-                return sponsor
+                return sponsor, key
 
-    return 'Advertisement detected'
+    return None
 
 
 class EpisodeSponsors(NamedTuple):
@@ -492,6 +492,12 @@ def _span_names_sponsor(segments: list[dict], start: float, end: float,
                         episode_sponsors: EpisodeSponsors | None, sponsor_service) -> bool:
     """Whether the span transcript names one known sponsor at least twice."""
     texts = bounded_segment_texts(segments, start, end)
+    return _text_names_sponsor(texts, episode_sponsors, sponsor_service)
+
+
+def _text_names_sponsor(texts: list[str],
+                        episode_sponsors: EpisodeSponsors | None, sponsor_service) -> bool:
+    """Whether the text names one known sponsor at least twice."""
     text = ' '.join(texts)
     if episode_sponsors is not None:
         audio_re, summary_re = episode_sponsors
@@ -529,11 +535,14 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
     fields; ``start``/``end`` are already-resolved seconds. Returns the final ad
     dict, or None if the candidate is rejected.
     """
-    if end <= start:
+    duration = end - start
+    log_prefix = f"[{slug}:{episode_id}]"
+    log_timestamp = f"{start:.1f}s-{end:.1f}s ({duration:.0f}s)"
+    if duration <= 0:
         logger.warning(
-            f"[{slug}:{episode_id}] Discarding ad candidate: "
-            f"invalid range (start={start:.1f}s >= end={end:.1f}s) - "
-            f"reason={str(ad.get('reason', ad.get('sponsor', '')))[:80]}"
+            f"{log_prefix} Discarding ad candidate: "
+            f"{log_timestamp} - Invalid range: start >= end, "
+            f"reason='{_flatten(ad.get('reason') or ad.get('end_text') or ad.get('sponsor') or 'None')[:100]}'"
         )
         return None
 
@@ -541,36 +550,53 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
     is_ad_val = ad.get('is_ad')
     if is_ad_val is not None:
         if str(is_ad_val).lower() in ('false', 'no', '0', 'none'):
-            logger.info(f"[{slug}:{episode_id}] Skipping non-ad: "
-                        f"{start:.1f}s-{end:.1f}s (is_ad={is_ad_val})")
+            logger.info(f"{log_prefix} Skipping non-ad: "
+                        f"{log_timestamp}, is_ad={is_ad_val}")
             return None
 
     # Filter by classification/type field
-    classification = str(ad.get('classification') or ad.get('type') or '').lower()
+    classification = _flatten(ad.get('classification') or ad.get('type') or '').lower()
     if classification in NOT_AD_CLASSIFICATIONS:
-        logger.info(f"[{slug}:{episode_id}] Skipping non-ad: "
-                    f"{start:.1f}s-{end:.1f}s (classification={classification})")
+        logger.info(f"{log_prefix} Skipping non-ad: "
+                    f"{log_timestamp}, classification={classification}")
         return None
 
     # Filter out explicitly ignored categories
     raw_category = _get_category(ad)
     if raw_category and raw_category.lower() in IGNORED_CATEGORIES:
-        logger.info(f"[{slug}:{episode_id}] Ignoring segment: "
-                    f"{start:.1f}s-{end:.1f}s (category={raw_category})")
+        logger.info(f"{log_prefix} Ignoring segment category: "
+                    f"{log_timestamp}, category={raw_category}")
         return None
+    # Attempt to repair the raw category to a known category
+    resolved_category = _repair_category(raw_category)
 
-    # Extract sponsor/advertiser name using priority fields + pattern matching
-    # Try extract_sponsor_name first for a real sponsor name.
-    # If it returns the default, fall back to Claude's raw reason.
-    sponsor_name = _extract_sponsor_name(ad)
-    reason = sponsor_name
-    existing_reason = ad.get('reason')
-    if reason == 'Advertisement detected':
-        if existing_reason and isinstance(existing_reason, str) and len(existing_reason) > 3:
-            reason = existing_reason
-    elif existing_reason and isinstance(existing_reason, str) and len(existing_reason) > len(reason) + 5:
-        # Claude's reason is substantially more descriptive than the bare sponsor name
-        reason = existing_reason
+    # The segment is content if its category matches a known content category,
+    # otherwise it is assumed to be an ad segment
+    is_content_segment = resolved_category in CONTENT_LIKE_CATEGORIES
+    is_ad_segment = not is_content_segment
+
+    # Get sponsor/advertiser name
+    sponsor_name, sponsor_field = None, None
+    has_sponsor_field = False
+    if is_ad_segment:
+        sponsor_info = _extract_sponsor_name(ad)
+        if sponsor_info:
+            sponsor_name, sponsor_field = sponsor_info
+            has_sponsor_field = sponsor_field in SPONSOR_PRIORITY_FIELDS
+
+    # Get the reason for the segment
+    reason = _flatten(ad.get('reason'))
+    if is_ad_segment:
+        # Use sponsor name if reason is too short or missing
+        if sponsor_name and len(reason) > len(sponsor_name) + 5:
+            # Claude's reason is substantially more descriptive than the bare sponsor name
+            pass
+        elif not sponsor_name and len(reason) > 3:
+            # No sponsor name but it is sufficiently descriptive, so keep
+            pass
+        else:
+            # Use sponsor name
+            reason = sponsor_name or "Advertisement detected"
     base_reason = reason
 
     # Extract description from Claude's response to enrich the reason
@@ -606,7 +632,8 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
     if isinstance(raw_conf, str):
         mapped = CONFIDENCE_STRING_MAP.get(raw_conf.lower().strip())
         if mapped is not None:
-            logger.debug(f"[{slug}:{episode_id}] Mapped string confidence '{raw_conf}' -> {mapped}")
+            logger.debug(f"{log_prefix} Mapped string confidence "
+                         f"{log_timestamp} - '{raw_conf}' -> {mapped}")
             raw_conf = mapped
         else:
             raw_conf = raw_conf.rstrip('%')
@@ -616,39 +643,48 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
 
     # Dynamic validation: require positive evidence this is an ad
     # instead of blocklisting content indicators (which keeps growing)
-    duration = end - start
-    has_sponsor_field = any(
-        _singular(key) in _SPONSOR_FIELD_STEMS
-        and _get_valid_sponsor_value(val)
-        for key, val in ad.items()
-    )
-    has_ad_language = mentions_advertising(reason)
+    has_segment_evidence = False
+    segment_evidence = ''
+    if is_content_segment:
+        has_segment_evidence = True
+        segment_evidence = "content segment"
+    elif has_sponsor_field:
+        has_segment_evidence = True
+        segment_evidence = f"sponsor field '{sponsor_field}'"
+    elif mentions_advertising(reason):
+        has_segment_evidence = True
+        segment_evidence = "'reason' mentions advertising"
+
     # Checked only when cheaper evidence is missing: the registry scan is costly.
-    has_known_sponsor = False
-    if not has_sponsor_field and not has_ad_language and not classifier_confirmed:
-        # Untruncated pieces, so a sponsor past the reason's length cap still counts.
+    # Untruncated pieces, so a sponsor past the reason's length cap still counts.
+    if not has_segment_evidence and not classifier_confirmed:
         raw_description = (_as_text(ad.get('description'))
                            if description_key != 'description' else '')
         summary = [t for t in (base_reason, full_description, raw_description) if t]
-        quotes = [t for t in (_as_text(ad.get('start_text')),
-                              _as_text(ad.get('end_text'))) if t]
-        has_known_sponsor = _names_known_sponsor(
-            summary, quotes, episode_sponsors, sponsor_service)
-    # A truncated reason can omit the sponsor the span transcript names.
-    found_in_span = (
-        not has_sponsor_field and not has_known_sponsor and not has_ad_language
-        and not classifier_confirmed and segments is not None and duration >= CONTENT_DURATION_THRESHOLD
-        and norm_conf >= LOW_CONFIDENCE
-        and _span_names_sponsor(segments, start, end, episode_sponsors, sponsor_service))
-    has_known_sponsor = has_known_sponsor or found_in_span
+        quotes = [t for t in (_flatten(ad.get('start_text')),
+                              _flatten(ad.get('end_text'))) if t]
+        if _names_known_sponsor(summary, quotes, episode_sponsors, sponsor_service):
+            has_segment_evidence = True
+            segment_evidence = "reason or text field contains known sponsor"
 
-    if not has_sponsor_field and not has_known_sponsor and not has_ad_language:
+    # A truncated reason can omit the sponsor the span transcript names.
+    # Check the transcript text as a last resort
+    lazy_span_transcript = None
+    if (not has_segment_evidence
+        and not classifier_confirmed and segments is not None
+        and duration >= CONTENT_DURATION_THRESHOLD and norm_conf >= LOW_CONFIDENCE):
+        if lazy_span_transcript is None:
+            lazy_span_transcript = bounded_segment_texts(segments, start, end)
+        if _text_names_sponsor(lazy_span_transcript, episode_sponsors, sponsor_service):
+            has_segment_evidence = True
+            segment_evidence = "sponsor found in span transcript"
+
+    if not has_segment_evidence:
         # Low confidence + no evidence = reject regardless of duration
         if norm_conf < LOW_CONFIDENCE:
             logger.info(
-                f"[{slug}:{episode_id}] Rejecting low-confidence non-sponsor: "
-                f"{start:.1f}s-{end:.1f}s ({duration:.0f}s, conf={norm_conf:.0%}) - "
-                f"reason: {reason[:100] if reason else 'None'}"
+                f"{log_prefix} Rejecting low-confidence non-sponsor: "
+                f"{log_timestamp}, conf={norm_conf:.0%}, reason='{(reason or 'None')[:100]}'"
             )
             return None
         # A confirming classifier's verdict replaces the duration gate; low-confidence rejection above still applies.
@@ -656,27 +692,42 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
             # No positive ad evidence: short segments get benefit of doubt, long ones are likely content.
             if duration >= CONTENT_DURATION_THRESHOLD:
                 logger.info(
-                    f"[{slug}:{episode_id}] Rejecting suspected content: "
-                    f"{start:.1f}s-{end:.1f}s ({duration:.0f}s) - "
-                    f"no sponsor identified in reason: {reason[:100] if reason else 'None'}"
+                    f"{log_prefix} Rejecting suspected content: "
+                    f"{log_timestamp} - "
+                    f"no sponsor identified in reason, reason='{(reason or 'None')[:100]}'"
                 )
                 return None
             if duration >= LOW_EVIDENCE_WARN_THRESHOLD:
                 logger.warning(
-                    f"[{slug}:{episode_id}] Low-confidence ad (no sponsor found): "
-                    f"{start:.1f}s-{end:.1f}s ({duration:.0f}s) - "
-                    f"reason: {reason[:100] if reason else 'None'}"
+                    f"{log_prefix} Low-confidence ad (no sponsor found): "
+                    f"{log_timestamp}, reason='{(reason or 'None')[:100]}'"
                 )
 
-    span_note = ' (sponsor found in span transcript)' if found_in_span else ''
-    logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}{span_note}")
+    # Resolve start/end_text if missing
+    start_text = _flatten(ad['start_text']) if ad.get('start_text') is not None else None
+    end_text = _flatten(ad['end_text']) if ad.get('end_text') is not None else None
+    if (end_text is None or start_text is None) and segments is not None:
+        # grab words from the transcript span ends
+        if lazy_span_transcript is None:
+            lazy_span_transcript = bounded_segment_texts(segments, start, end)
+        words = ' '.join(lazy_span_transcript).split()
+        start_text = ' '.join(words[:8]) if start_text is None else start_text
+        end_text = ' '.join(words[-8:]) if end_text is None else end_text
+
+    logger.info(f"{log_prefix} Extracted segment: "
+                f"{log_timestamp}, "
+                f"category='{resolved_category or raw_category or ''}', "
+                f"reason='{(reason or '')[:100]}', "
+                f"fields={list(ad.keys())} - "
+                f"IsAd: {is_ad_segment}, Evidence: {segment_evidence or 'none'}")
+
     ad_entry = {
         'start': start,
         'end': end,
         'confidence': norm_conf,
         'reason': reason,
-        'start_text': _as_text(ad.get('start_text')),
-        'end_text': _as_text(ad.get('end_text'))
+        'start_text': start_text,
+        'end_text': end_text,
     }
     # Store sponsor name separately for UI display
     # (reuses sponsor_name captured above; ad is unmutated between)
@@ -684,7 +735,6 @@ def _normalize_ad(ad: dict, start: float, end: float, slug: str = None,
         ad_entry['sponsor'] = sponsor_name
     # Pass the LLM's raw category through unvalidated; the
     # merge seam normalizes it against SEGMENT_CATEGORIES.
-    resolved_category = _repair_category(raw_category)
     if resolved_category:
         ad_entry['category'] = resolved_category
     # Only the literal true counts; the detector decides whether the feed keeps it.

@@ -31,7 +31,7 @@ def test_an_audio_echo_is_not_ad_language(reason):
 @pytest.mark.parametrize('reason', ECHO_REASONS)
 def test_an_audio_echo_is_never_a_sponsor(reason):
     assert sanitize_sponsor_label(reason) is None
-    assert _extract_sponsor_name({'reason': reason}) == 'Advertisement detected'
+    assert _extract_sponsor_name({'reason': reason}) is None
 
 
 @pytest.mark.parametrize('reason', [
@@ -53,7 +53,7 @@ def test_real_ad_words_still_count_beside_an_echo(reason):
     'Acme Tools drill sale',
 ])
 def test_a_short_prose_reason_is_not_a_sponsor(reason):
-    assert _extract_sponsor_name({'reason': reason}) == 'Advertisement detected'
+    assert _extract_sponsor_name({'reason': reason}) is None
 
 
 def test_a_long_span_with_only_an_echoed_reason_is_rejected():
@@ -63,4 +63,4 @@ def test_a_long_span_with_only_an_echoed_reason_is_rejected():
 
 
 def test_a_short_reason_keeps_a_framed_sponsor_name():
-    assert _extract_sponsor_name({'reason': 'Brought to you by Acme Tools online therapy'}) == 'Acme Tools'
+    assert _extract_sponsor_name({'reason': 'Brought to you by Acme Tools online therapy'}) == ('Acme Tools', 'reason')
