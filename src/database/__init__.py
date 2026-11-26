@@ -257,8 +257,8 @@ Output:
       "start_text": "Visit Acme dot com to get",
       "end_text": "dot com to get started today.",
       "category": "sponsor",
-      "reason": "Appears to be a leftover ad fragment",
       "sponsor_name": "Acme",
+      "reason": "Acme: appears to be a leftover ad fragment",
       "confidence": 0.85
     }
   ]

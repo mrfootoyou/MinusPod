@@ -1250,8 +1250,8 @@ Output:
       "start_text": "This episode is sponsored by Acme",
       "end_text": "get 20% off your first order.",
       "category": "sponsor",
-      "reason": "Sustained audience-directed product promotion",
       "sponsor_name": "Acme Coffee",
+      "reason": "Acme Coffee: audience-directed ad",
       "confidence": 0.95
     }
   ]
